@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+dist-ssr/
+.next/
+build/
+*.tsbuildinfo
+
+# Env files (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Prisma: schema + migrations ARE tracked; generated client lives in node_modules.
+
+# Editor / OS
+.DS_Store
+*.local
+.vscode/
+.idea/
+*.swp
+
+# Local agent/tool runtime state (machine-specific, not part of the project).
+.serena/
+.playwright-mcp/
+
+# OMC orchestration runtime state (local, machine-specific), at any depth.
+# Design artifacts (.omc/plans, .omc/specs) stay tracked.
+.omc/
+**/.omc/state/
+**/.omc/sessions/
+**/.omc/logs/
+**/.omc/research/

@@ -1,0 +1,369 @@
+// Allosta counseling booking platform — data model (plan §7).
+//
+// CONCURRENCY (AC15/AC2): A partial unique index enforces "at most one ACTIVE
+// Booking per slot", where ACTIVE = status IN ('PENDING','CONFIRMED'). This
+// covers the PENDING-first flow: two customers cannot both preempt the same
+// slot. CANCELLED and COMPLETED bookings leave the index, reopening the slot.
+// Prisma cannot express partial unique indexes in this schema, so it is created
+// via raw SQL in the migration `booking_pending_first`:
+//   CREATE UNIQUE INDEX "booking_slot_active_unique"
+//     ON "Booking"("slotId") WHERE "status" IN ('PENDING','CONFIRMED');
+// Booking creation uses an insert-first / catch-23505 pattern that maps the
+// unique violation to a 409 ConflictException (see booking.service.ts).
+//
+// FAMILY LINK (symmetric, AC1-AC10): FamilyLink connects two Customer accounts
+// symmetrically. Partial unique index enforces at most one ACCEPTED link per
+// pair (normalized as sorted customerLowId/customerHighId):
+//   CREATE UNIQUE INDEX "family_link_accepted_pair_unique"
+//     ON "FamilyLink"("customerLowId","customerHighId") WHERE status = 'ACCEPTED';
+// PENDING rows have a null inviteeCustomerId so pair normalization is deferred
+// to accept time. Accept uses UPDATE+catch-P2002 (see family.service.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  COUNSELOR
+  ADMIN
+}
+
+enum SubjectType {
+  CUSTOMER
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum Outcome {
+  EXPLAINED
+  GUIDED
+  PURCHASED
+}
+
+enum ConsultationActionType {
+  METRIC_EXPLAINED
+  DIET_GUIDANCE
+  SUPPLEMENT_GUIDANCE
+  RETEST_GUIDANCE
+  LIFESTYLE_GUIDANCE
+}
+
+enum NotificationType {
+  CONFIRMATION
+  REMINDER
+  SLOT_OPENED
+}
+
+enum NotificationChannel {
+  CONSOLE
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum WaitlistStatus {
+  WAITING
+  NOTIFIED
+  CONVERTED
+  CANCELLED
+  EXPIRED
+}
+
+enum FamilyLinkStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  customer  Customer?
+  counselor Counselor?
+}
+
+model Customer {
+  id     String @id @default(cuid())
+  userId String @unique
+  name   String
+  phone  String
+
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings     Booking[]
+  waitlists    Waitlist[]
+  inviterLinks FamilyLink[] @relation("InviterLinks")
+  inviteeLinks FamilyLink[] @relation("InviteeLinks")
+  enrollments  ChallengeEnrollment[]
+}
+
+model Counselor {
+  id        String @id @default(cuid())
+  userId    String @unique
+  name      String
+  specialty String
+
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slots       AvailabilitySlot[]
+  records     ConsultationRecord[]
+  waitlists   Waitlist[]
+  enrollments ChallengeEnrollment[]
+}
+
+model AvailabilitySlot {
+  id          String   @id @default(cuid())
+  counselorId String
+  startAt     DateTime
+  endAt       DateTime
+  // `isOpen` is an operational flag (counselor opens/closes the slot).
+  // It does NOT encode "is booked" — availability is derived as:
+  // slot exists AND isOpen AND has no CONFIRMED Booking (plan §2.3 single-source-of-truth).
+  isOpen      Boolean  @default(true)
+
+  counselor Counselor @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+  bookings  Booking[]
+  waitlists Waitlist[]
+
+  @@index([counselorId])
+}
+
+model Booking {
+  id           String        @id @default(cuid())
+  slotId       String
+  customerId   String
+  subjectType  SubjectType
+  subjectId    String
+  // The test result the consultation is about. Nullable for legacy bookings
+  // created before the calendar redesign; new bookings always set it, and the
+  // subject (subjectType/subjectId) is derived from this result's owner.
+  testResultId String?
+  status       BookingStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+
+  // NOTE: the partial unique index on (slotId) WHERE status IN ('PENDING','CONFIRMED')
+  // is added via raw SQL migration (see header comment) — it is what enforces
+  // AC15/AC2 (at most one ACTIVE booking per slot, covering PENDING preemption).
+
+  slot          AvailabilitySlot    @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  testResult    TestResult?         @relation(fields: [testResultId], references: [id], onDelete: SetNull)
+  record        ConsultationRecord?
+  notifications Notification[]
+
+  @@index([slotId])
+  @@index([customerId])
+  @@index([testResultId])
+}
+
+model ConsultationRecord {
+  id             String                   @id @default(cuid())
+  bookingId      String                   @unique
+  counselorId    String
+  summary        String
+  recommendation String
+  followUp       String?
+  actions        ConsultationActionType[] @default([])
+  outcome        Outcome
+  createdAt      DateTime                 @default(now())
+
+  booking     Booking                     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  counselor   Counselor                   @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+  products    ConsultationRecordProduct[]
+  metrics     ConsultationRecordMetric[]
+  enrollments ChallengeEnrollment[]
+
+  @@index([counselorId])
+}
+
+model Product {
+  id       String @id @default(cuid())
+  name     String
+  category String
+
+  records ConsultationRecordProduct[]
+}
+
+model ConsultationRecordProduct {
+  recordId  String
+  productId String
+
+  record  ConsultationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  product Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([recordId, productId])
+  @@index([productId])
+}
+
+model TestResult {
+  id          String      @id @default(cuid())
+  subjectType SubjectType
+  subjectId   String
+  serviceType String
+  metrics     Json
+  createdAt   DateTime    @default(now())
+
+  recordMetrics ConsultationRecordMetric[]
+  bookings      Booking[]
+
+  @@index([subjectType, subjectId])
+}
+
+model ConsultationRecordMetric {
+  id           String @id @default(cuid())
+  recordId     String
+  testResultId String
+  metricKey    String
+
+  record     ConsultationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  testResult TestResult         @relation(fields: [testResultId], references: [id], onDelete: Cascade)
+
+  @@index([recordId])
+  @@index([testResultId])
+}
+
+// BioCom step-3 "관리 프로그램/챌린지" (AC4). Challenge is a seed-managed catalog;
+// ChallengeEnrollment is counselor-driven, created atomically inside createRecord.
+enum ChallengeEnrollmentStatus {
+  IN_PROGRESS
+  COMPLETED
+  DROPPED
+}
+
+model Challenge {
+  id          String @id @default(cuid())
+  name        String
+  category    String
+  description String
+  // Advisory only: a sort/hint for which Challenge fits a serviceType. Never a
+  // hard filter — the full catalog is always offered.
+  linkedServiceType String?
+
+  enrollments ChallengeEnrollment[]
+}
+
+model ChallengeEnrollment {
+  id          String                    @id @default(cuid())
+  challengeId String
+  customerId  String
+  // The ConsultationRecord whose creation enrolled the customer (plan B1).
+  recordId    String
+  // Denormalised for query convenience + the cascade FK. Analytics conversion
+  // ALWAYS scopes through the record's counselorId via JOIN, never this in
+  // isolation — equal at write time since the record's counselor is the enroller.
+  counselorId String
+  status      ChallengeEnrollmentStatus @default(IN_PROGRESS)
+  enrolledAt  DateTime                  @default(now())
+
+  // All FKs cascade (mirror ConsultationRecordMetric) so deleting a Customer,
+  // Counselor, or ConsultationRecord sweeps enrollment rows automatically.
+  challenge Challenge          @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  customer  Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  record    ConsultationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  counselor Counselor          @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+
+  // A record is one-per-booking (bookingId @unique) and creates AT MOST ONE
+  // enrollment (single optional challengeId). recordId uniqueness fully bounds
+  // it and makes the invariant explicit for the retry-enrollment spec.
+  @@unique([recordId])
+  @@index([challengeId])
+  @@index([customerId])
+  @@index([counselorId])
+}
+
+model Notification {
+  id          String              @id @default(cuid())
+  bookingId   String?
+  waitlistId  String?
+  type        NotificationType
+  channel     NotificationChannel
+  status      NotificationStatus  @default(PENDING)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime            @default(now())
+
+  booking  Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  waitlist Waitlist? @relation(fields: [waitlistId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([waitlistId])
+  @@index([status, scheduledAt])
+}
+
+model Waitlist {
+  id              String         @id @default(cuid())
+  customerId      String
+  counselorId     String
+  subjectType     SubjectType
+  subjectId       String
+  status          WaitlistStatus @default(WAITING)
+  // Advisory TTL offer: set when status=NOTIFIED; null otherwise.
+  // offeredSlotId is the slot opened by a cancellation; offerExpiresAt is the
+  // UTC deadline after which the offer lapses to EXPIRED. The offer confers no
+  // booking priority — a non-waitlisted customer may still book the slot first.
+  offeredSlotId   String?
+  offerExpiresAt  DateTime?
+  createdAt       DateTime       @default(now())
+
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  counselor     Counselor         @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+  offeredSlot   AvailabilitySlot? @relation(fields: [offeredSlotId], references: [id], onDelete: SetNull)
+  notifications Notification[]
+
+  @@index([customerId])
+  @@index([counselorId])
+  @@index([status])
+  @@index([status, offerExpiresAt])
+}
+
+// Symmetric family link — connects two Customer accounts bidirectionally.
+// PENDING  = invite code generated by inviter, invitee not yet set.
+// ACCEPTED = invitee accepted; customerLowId/customerHighId pair normalised.
+// REVOKED  = either party revoked the link.
+//
+// Pair uniqueness for ACCEPTED links is enforced by a partial unique index
+// (see header comment — Prisma cannot express WHERE-clause indexes):
+//   CREATE UNIQUE INDEX "family_link_accepted_pair_unique"
+//     ON "FamilyLink"("customerLowId","customerHighId") WHERE status = 'ACCEPTED';
+model FamilyLink {
+  id                String           @id @default(cuid())
+  inviterCustomerId String
+  inviteeCustomerId String?
+  customerLowId     String?
+  customerHighId    String?
+  relationLowToHigh String?
+  relationHighToLow String?
+  code              String           @unique
+  status            FamilyLinkStatus @default(PENDING)
+  expiresAt         DateTime
+  createdAt         DateTime         @default(now())
+  acceptedAt        DateTime?
+
+  inviter Customer  @relation("InviterLinks", fields: [inviterCustomerId], references: [id], onDelete: Cascade)
+  invitee Customer? @relation("InviteeLinks", fields: [inviteeCustomerId], references: [id], onDelete: SetNull)
+
+  @@index([inviterCustomerId])
+  @@index([inviteeCustomerId])
+  @@index([code])
+  @@index([status])
+}
