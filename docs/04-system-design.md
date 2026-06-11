@@ -626,7 +626,7 @@ sequenceDiagram
     Browser ->> AuthRoute: POST /api/auth/login
     AuthRoute ->> NestJS: POST /auth/login
     NestJS -->> AuthRoute: { accessToken }
-    AuthRoute -->> Browser: Set-Cookie: allosta_session=JWT; HttpOnly; SameSite=Lax
+    AuthRoute -->> Browser: Set-Cookie allosta_session=JWT (HttpOnly, SameSite=Lax)
     Note over Browser: 클라이언트 JS는 JWT 접근 불가
 
     User ->> Browser: /book 접근
@@ -670,7 +670,7 @@ sequenceDiagram
     FE ->> Auth: POST /api/auth/login
     Auth ->> DB: User 조회 + bcrypt 검증
     DB -->> Auth: User (role=CUSTOMER)
-    Auth -->> FE: Set-Cookie: allosta_session=JWT (HttpOnly)
+    Auth -->> FE: Set-Cookie allosta_session=JWT (HttpOnly)
     FE -->> Customer: /book 리다이렉트
 
     Note over Customer, DB: 2. 통합 캘린더 조회
