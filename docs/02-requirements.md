@@ -112,17 +112,17 @@
 | ID | 요구사항 |
 |----|---------|
 | FR8-1 | 검사결과(`TestResult`)는 seed 데이터(JSON)로 제공되며, 조회 전용 API만 노출한다. |
-| FR8-2 | `GET /test-results/my`는 로그인 고객 본인 및 연결된 가족 구성원의 TestResult를 모두 반환한다(FamilyLink ACCEPTED 조건). |
+| FR8-2 | `GET /test-results`는 로그인 고객 본인 및 연결된 가족 구성원의 TestResult를 모두 반환한다(FamilyLink ACCEPTED 조건). |
 | FR8-3 | `TestResult`의 `metrics` 필드는 JSONB 배열로 저장되며, `metricKey`로 개별 지표를 참조할 수 있다. 각 지표 요소는 `{ metricKey, label?, value, unit?, referenceRange?, status? }` 형태이며, `referenceRange`/`status`는 기존 `{metricKey,value,unit}` 형태의 **하위호환 superset**으로 추가된다(누락 가능, 기존 소비자 무영향). `status ∈ {정상, 주의, 위험}`. |
 | FR8-4 | 검사결과 업로드·파싱 파이프라인은 `UploadPipeline` 인터페이스 경계로만 표현한다(구현 없음). |
-| FR8-5 | BioCom의 7종 검사 서비스(`serviceType`: `METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)가 시드된다. `serviceType`은 자유 문자열(ADR 0003: seed-only/read-only)이되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수에서 코드를 가져와 표류를 방지한다. 프론트엔드는 별도 라벨 맵(`SERVICE_TYPE_LABELS`)으로 한글 표시명을 매핑한다(예약·내 예약·검사결과 모든 표면에서 raw 코드 대신 친화 라벨을 노출). |
+| FR8-5 | BioCom의 7종 검사 서비스(`serviceType`: `METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)가 시드된다. `serviceType`은 자유 문자열(ADR 0007: seed-only/read-only)이되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수에서 코드를 가져와 표류를 방지한다. 프론트엔드는 별도 라벨 맵(`SERVICE_TYPE_LABELS`)으로 한글 표시명을 매핑한다(예약·내 예약·검사결과 모든 표면에서 raw 코드 대신 친화 라벨을 노출). |
 | FR8-6 | 검사결과는 표시 레벨에서 **(subjectId + 검사일) 단위 "검사 결과서"**로 그룹핑된다(`lib/reports.ts`, 순수 함수). 검사결과 화면은 **`내 검사`/`연동 계정` 서브탭**으로 본인·가족 결과를 분리하고, 예약하기는 결과서 단위로 선택한다. 스키마/API 무변경 — `Booking.testResultId`는 subject 앵커이므로 대표 결과 id 전송으로 충분하다(ADR 0008). |
 
 ### FR9 — 가족 연결 (Family Linking)
 
 | ID | 요구사항 |
 |----|---------|
-| FR9-1 | 보호자 고객(`guardian`)은 `POST /family/links`로 초대 코드를 생성해 가족 구성원을 플랫폼 계정으로 연결할 수 있다(`FamilyLink status=PENDING`). |
+| FR9-1 | 보호자 고객(`guardian`)은 `POST /family/invite-codes`로 초대 코드를 생성해 가족 구성원을 플랫폼 계정으로 연결할 수 있다(`FamilyLink status=PENDING`). |
 | FR9-2 | 상대 고객이 초대 코드를 수락하면 `FamilyLink status=ACCEPTED`로 전이되고, `inviteeCustomerId`가 수락 계정으로 설정된다(대칭 연결 성립). |
 | FR9-3 | `FamilyLink`는 `PENDING / ACCEPTED / REVOKED` 3단계 상태를 가지며, 보호자가 언제든 REVOKED로 철회할 수 있다. |
 | FR9-4 | FamilyLink는 만료 시각(`expiresAt`)을 포함해 기한이 지난 초대 코드를 무효화한다. |

@@ -62,7 +62,7 @@ graph TB
         WaitlistMod["WaitlistModule\nWaitlistController\nWaitlistService\n── FIFO 공석 알림"]
         ConsultMod["ConsultationModule\nConsultationController\nConsultationService\n── 소유권 검증\n── 지표 연결"]
         AnalyticsMod["AnalyticsModule\nAnalyticsController\nAnalyticsService\n── 전환율 실시간 집계\n── 지표별 전환\n── scope 토글(own/all)"]
-        TestResultMod["TestResultModule\nTestResultController\n── GET /test-results/my\n── FamilyLink ACCEPTED 포함\n── UploadPipeline interface"]
+        TestResultMod["TestResultModule\nTestResultController\n── GET /test-results\n── FamilyLink ACCEPTED 포함\n── UploadPipeline interface"]
         FamilyMod["FamilyModule\nFamilyController\nFamilyService\n── FamilyLink 초대 코드\n── PENDING→ACCEPTED→REVOKED"]
         NotifMod["NotificationModule\nNotificationService\nNotificationScheduler\n@Cron: REMINDER 스캔"]
         subgraph NotifChannels["NotificationChannel 어댑터 경계"]
@@ -289,9 +289,9 @@ erDiagram
 
 **`ConsultationActionType` 다중 선택 체크리스트**: `METRIC_EXPLAINED`(지표 설명), `DIET_GUIDANCE`(식이 권고), `SUPPLEMENT_GUIDANCE`(영양제 권고), `RETEST_GUIDANCE`(재검사 안내), `LIFESTYLE_GUIDANCE`(생활습관 안내). 상담 기록의 `actions[]`에 다중 선택으로 저장되며(`structured_consultation_record` 마이그레이션에서 도입, 동시에 `notes` 드롭), `outcome` enum과 마찬가지로 enum 제약으로 상담사 간 기록 일관성을 강제한다. `actions × outcome`이 쿼리 가능해 어떤 상담행위가 전환에 기여했는지 상담행위별 전환 분석을 할 수 있다.
 
-**`FamilyLink`**: 두 `Customer` 계정 사이의 **대칭형**(Customer↔Customer) 초대 코드 기반 연결. `inviterCustomerId`가 초대 코드를 생성하고, 수락 시 `inviteeCustomerId`가 설정된다(`customerLowId`/`customerHighId` 정규화 쌍으로 ACCEPTED 쌍 중복을 partial unique 인덱스로 차단). TestResult 조회(`GET /test-results/my`)와 예약 소유권 검증은 ACCEPTED 상태의 FamilyLink로 연결된 파트너의 검사결과를 포함한다. 가족 구성원도 자체 `Customer` 계정을 보유하며, 별도의 `FamilyMember` 엔티티는 없다.
+**`FamilyLink`**: 두 `Customer` 계정 사이의 **대칭형**(Customer↔Customer) 초대 코드 기반 연결. `inviterCustomerId`가 초대 코드를 생성하고, 수락 시 `inviteeCustomerId`가 설정된다(`customerLowId`/`customerHighId` 정규화 쌍으로 ACCEPTED 쌍 중복을 partial unique 인덱스로 차단). TestResult 조회(`GET /test-results`)와 예약 소유권 검증은 ACCEPTED 상태의 FamilyLink로 연결된 파트너의 검사결과를 포함한다. 가족 구성원도 자체 `Customer` 계정을 보유하며, 별도의 `FamilyMember` 엔티티는 없다.
 
-**`TestResult.serviceType` + `metrics` 형태(BioCom — ADR 0007)**: `serviceType`은 자유 문자열을 유지(ADR 0003: seed-only/read-only)하되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수(7종: `METABOLIC_6`·`FOOD_INTOLERANCE`·`STRESS_AGING`·`NUTRIENT_HEAVY_METAL`·`GUT_MICROBIOME`·`HORMONE`·`PET_NUTRITION`)에서 코드를 가져와 표류를 차단한다. `metrics` JSONB 배열 요소는 `{metricKey, label?, value, unit?, referenceRange?, status?}`로 **하위호환 superset** 확장됐다 — 기존 소비자(`normalizeMetrics`, `toMetricList`)는 `{metricKey,value,unit}`만 읽고 새 키를 무시하므로 무영향. `status`/`referenceRange`는 결과 해석 UX를 위해 시드에 사전 계산되며(`status ∈ {정상,주의,위험}`), enum 대신 문자열을 쓴 것은 마이그레이션·테스트 픽스처 churn을 피하기 위함이다.
+**`TestResult.serviceType` + `metrics` 형태(BioCom — ADR 0007)**: `serviceType`은 자유 문자열을 유지(ADR 0007: seed-only/read-only)하되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수(7종: `METABOLIC_6`·`FOOD_INTOLERANCE`·`STRESS_AGING`·`NUTRIENT_HEAVY_METAL`·`GUT_MICROBIOME`·`HORMONE`·`PET_NUTRITION`)에서 코드를 가져와 표류를 차단한다. `metrics` JSONB 배열 요소는 `{metricKey, label?, value, unit?, referenceRange?, status?}`로 **하위호환 superset** 확장됐다 — 기존 소비자(`normalizeMetrics`, `toMetricList`)는 `{metricKey,value,unit}`만 읽고 새 키를 무시하므로 무영향. `status`/`referenceRange`는 결과 해석 UX를 위해 시드에 사전 계산되며(`status ∈ {정상,주의,위험}`), enum 대신 문자열을 쓴 것은 마이그레이션·테스트 픽스처 churn을 피하기 위함이다.
 
 **`Challenge` + `ChallengeEnrollment`(BioCom step-3 — ADR 0007)**: `Challenge`는 시드 관리 카탈로그(`GET /challenges`)이고, `ChallengeEnrollment`는 상담사가 상담 기록 생성 시 고객을 등록하는 join 엔티티다. 등록은 `createRecord` 트랜잭션 안에서 원자적으로 생성되며(`updateRecord`는 등록을 건드리지 않음), 존재하지 않는 `challengeId`는 트랜잭션 진입 **전** `findUnique` 가드가 깨끗한 404로 막는다. 코드는 outcome에 게이팅하지 않으며(어떤 outcome도 등록 가능), 구매와의 연관은 UI 컨벤션·Analytics 해석에서만 표현된다. `counselorId`는 비정규화 저장하되 Analytics 전환율은 항상 record JOIN(`ConsultationRecord.counselorId`)으로 범위를 산정한다.
 
@@ -455,8 +455,8 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING : POST /family/links\n(초대 고객이 코드 생성)
-    PENDING --> ACCEPTED : POST /family/links/accept\n(상대 고객이 코드 수락\ninviteeCustomerId 설정 + 정규화 쌍 기록)
+    [*] --> PENDING : POST /family/invite-codes\n(초대 고객이 코드 생성)
+    PENDING --> ACCEPTED : POST /family/invite-codes/:code/accept\n(상대 고객이 코드 수락\ninviteeCustomerId 설정 + 정규화 쌍 기록)
     PENDING --> REVOKED : DELETE /family/links/:id\n(연결 철회)
     ACCEPTED --> REVOKED : DELETE /family/links/:id\n(연결 해제 — 양측 모두 가능)
     PENDING --> [*] : expiresAt 경과 (만료)
@@ -466,7 +466,7 @@ stateDiagram-v2
 
 ### 7.3 TestResult 조회에서의 FamilyLink 활용
 
-`GET /test-results/my`는 다음 범위의 TestResult를 반환한다(subject는 항상 `CUSTOMER`):
+`GET /test-results`는 다음 범위의 TestResult를 반환한다(subject는 항상 `CUSTOMER`):
 1. `subjectId = 현재_고객.id` — 본인 검사결과
 2. `subjectId ∈ { ACCEPTED FamilyLink로 현재 고객과 연결된 파트너 Customer.id }` — 가족 파트너의 검사결과
 
@@ -490,7 +490,7 @@ stateDiagram-v2
 ```
 JWT Guard (인증)
   └── RolesGuard (역할)
-       ├── @Roles(Role.CUSTOMER)   → /bookings, /waitlist, /test-results/my
+       ├── @Roles(Role.CUSTOMER)   → /bookings, /waitlist, /test-results
        ├── @Roles(Role.COUNSELOR)  → /counselor/schedule, /consultation-records
        ├── @Roles(Role.ADMIN, Role.COUNSELOR) → /admin/analytics
        └── @Roles(Role.ADMIN)      → /admin/analytics/records, /admin/analytics/drilldown
@@ -808,7 +808,7 @@ sequenceDiagram
 | `GET` | `/admin/analytics` | ADMIN, COUNSELOR | Query: `?scope=own\|all&counselorId=uuid` | `{ conversionRate, outcomeDistribution, productInterest[], metricConversion[], challengeEnrollments, challengeConversionRate }` (`challengeConversionRate: number\|null`) | 401, 403 |
 | `GET` | `/admin/analytics/records` | ADMIN | Query: `?from&to&counselorId` | `ConsultationRecord[]` | 401, 403 |
 | `POST` | `/waitlist` | CUSTOMER | `{ counselorId, subjectType, subjectId }` | `Waitlist` (201) | 403, 404 |
-| `GET` | `/test-results/my` | CUSTOMER | — | `TestResult[]` (본인 + ACCEPTED FamilyLink 가족) | 401 |
+| `GET` | `/test-results` | CUSTOMER | — | `TestResult[]` (본인 + ACCEPTED FamilyLink 가족) | 401 |
 | `GET` | `/notifications` | CUSTOMER, COUNSELOR | Query: `?status=PENDING\|SENT` | `Notification[]` | 401 |
 | `POST` | `/family/invite-codes` | CUSTOMER | — (발급자는 JWT customerId) | `FamilyLink` (201, status=PENDING; 기존 PENDING 코드 재발급) | 401 |
 | `POST` | `/family/invite-codes/:code/accept` | CUSTOMER | Path: `code` | `FamilyLink` (200, status=ACCEPTED, inviteeCustomerId=수락자) | 400 (만료·잘못된 코드), 409 (이미 수락·자기 자신) |

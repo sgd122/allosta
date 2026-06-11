@@ -62,7 +62,7 @@ export interface NotificationChannel {
 
 1. `REMINDER_LEAD_MINUTES` 환경 변수로 리드타임 조정 가능(기본값 30분, 데모 시 1–2분으로 설정).
 2. `seed.ts`에 현재 시각 기준 가까운 미래(+10분) 슬롯 1건 포함 → 스케줄러가 데모 중 실제 발화.
-3. `backend/scripts/trigger-reminder.ts`(또는 dev 전용 엔드포인트 `POST /dev/trigger-reminders`)로 수동 즉시 트리거 제공.
+3. `backend/scripts/trigger-scheduler.ts`(앱 컨텍스트 부팅 → `NotificationService.dispatchPending()` 호출 후 종료) 또는 ADMIN 전용 엔드포인트 `POST /admin/notifications/dispatch`로 수동 즉시 트리거 제공.
 
 ---
 

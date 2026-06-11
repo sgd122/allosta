@@ -47,7 +47,7 @@
 
 - `@RolesGuard()` + `@Roles(Role.ADMIN)` 데코레이터로 역할 접근제어 의도가 코드 수준에서 즉시 가독되며, 평가자가 Guard 레이어와 서비스 레이어의 분리를 명확히 확인할 수 있다.
 - `@nestjs/schedule`의 `@Cron()` 데코레이터로 리마인더 스케줄러가 추가 인프라 없이 동작한다(재현성 동인 충족).
-- 공유 타입 패키지(`packages/shared-types`)로 FE/BE DTO를 한 곳에서 관리할 수 있다.
+- FE/BE가 TypeScript 단일 언어이므로 DTO/타입을 양쪽 언어에서 이중 정의할 필요가 없다. 공유 타입 패키지(`packages/shared-types`)로 한 곳에서 관리하는 경로도 열려 있으나, 현재는 도입하지 않았다(YAGNI — ADR 0005 참조).
 
 **트레이드오프 / 부정적 영향**
 
