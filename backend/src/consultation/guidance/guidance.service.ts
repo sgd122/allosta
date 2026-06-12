@@ -79,7 +79,13 @@ export class GuidanceService {
       update: {},
     });
 
-    if (row.status === BriefGuidanceStatus.FALLBACK) {
+    // Only re-write when the row is still FALLBACK AND the content actually
+    // changed — a fresh upsert already stored this content, so the first brief
+    // open needs no second write.
+    if (
+      row.status === BriefGuidanceStatus.FALLBACK &&
+      row.content !== content
+    ) {
       const refreshed = await this.prisma.consultationBriefGuidance.update({
         where: { bookingId },
         data: { content },
