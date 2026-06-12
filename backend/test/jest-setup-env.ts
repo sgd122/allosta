@@ -20,3 +20,15 @@ const TEST_DATABASE_URL =
   'postgresql://allosta:allosta@localhost:5432/allosta_test';
 
 process.env.DATABASE_URL = TEST_DATABASE_URL;
+
+/**
+ * Ollama isolation: the suite must assume NO local LLM (ADR 0014 fail-soft
+ * default), so the deterministic FALLBACK summary is always the result on the
+ * golden path — regardless of whether a developer happens to have `ollama serve`
+ * running on the default port. We point OLLAMA_BASE_URL at a guaranteed-dead
+ * loopback port so OllamaSummarizer.available() resolves false and the live
+ * OpsScheduler @Interval upgrade sweep is a deterministic no-op. Specs that need
+ * the UPGRADED path stub OllamaSummarizer directly via the Nest testing module.
+ */
+process.env.OLLAMA_BASE_URL =
+  process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:1'; // unreachable by design
