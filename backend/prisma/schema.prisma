@@ -28,7 +28,7 @@
 // (Prisma cannot express exclusion constraints) in migration
 // `customer_no_overlap`:
 //   ALTER TABLE "Booking" ADD CONSTRAINT "booking_customer_no_overlap"
-//     EXCLUDE USING gist ("customerId" WITH =, tstzrange("slotStartAt","slotEndAt") WITH &&)
+//     EXCLUDE USING gist ("customerId" WITH =, tsrange("slotStartAt","slotEndAt") WITH &&)
 //     WHERE ("status" IN ('PENDING','CONFIRMED'));
 // Booking.slotStartAt/slotEndAt below are the denormalized slot window the
 // constraint ranges over.
@@ -184,7 +184,7 @@ model Booking {
   // is added via raw SQL migration (see header comment) — it is what enforces
   // AC15/AC2 (at most one ACTIVE booking per slot, covering PENDING preemption).
   // A second raw-SQL constraint, booking_customer_no_overlap (GiST EXCLUDE over
-  // customerId + tstzrange(slotStartAt, slotEndAt), partial on ACTIVE), enforces
+  // customerId + tsrange(slotStartAt, slotEndAt), partial on ACTIVE), enforces
   // that one customer cannot hold two overlapping ACTIVE bookings (ADR 0015).
 
   slot          AvailabilitySlot    @relation(fields: [slotId], references: [id], onDelete: Cascade)
