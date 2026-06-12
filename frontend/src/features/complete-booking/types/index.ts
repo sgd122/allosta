@@ -1,15 +1,8 @@
-export type BookingIntentSource = 'calendar-slot' | 'waitlist-offer';
+export type BookingIntentSource = 'calendar-slot';
 
 export interface BookingIntent {
   source: BookingIntentSource;
   slotId: string;
-  startAt: string;
-  endAt: string;
-  waitlistId?: string;
-}
-
-export interface WaitlistOfferSlot {
-  id: string;
   startAt: string;
   endAt: string;
 }

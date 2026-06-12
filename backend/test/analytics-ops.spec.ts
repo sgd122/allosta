@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { BookingStatus, SubjectType, WaitlistStatus } from '@prisma/client';
+import { BookingStatus, SubjectType } from '@prisma/client';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
@@ -10,33 +10,28 @@ import {
 } from './helpers/test-app';
 
 /**
- * Ops funnel analytics — funnel counts + noShowRate + slotUtilization +
- * waitlistConversionRate in GET /admin/analytics (plan AC-A1..A4).
+ * Ops funnel analytics — funnel counts + noShowRate + slotUtilization in
+ * GET /admin/analytics (plan AC-A1..A3).
  *
  * Two isolated data islands ensure scope=own (counselor JWT) only surfaces
- * that counselor's own bookings/slots/waitlist rows and never the other
- * island's data.
+ * that counselor's own bookings/slots and never the other island's data.
  *
  * Island A (counselorA):
  *   - 3 past isOpen slots
  *       slotA1 → COMPLETED booking
  *       slotA2 → NO_SHOW booking
  *       slotA3 → no booking (open, past, unused)
- *   - Waitlist: 1 CONVERTED + 1 EXPIRED
  *   Expected:
  *       funnel.completed = 1, funnel.noShow = 1, rest = 0
  *       noShowRate        = 0.5  (1 / (1+1))
  *       slotUtilization   = 2/3  (2 slots with a booking / 3 past isOpen slots)
- *       waitlistConvRate  = 0.5  (1 / (1+1))
  *
  * Island B (counselorB):
  *   - 2 past isOpen slots, both with COMPLETED bookings
- *   - Waitlist: 2 CONVERTED + 0 EXPIRED
  *   Expected:
  *       funnel.completed = 2, funnel.noShow = 0
  *       noShowRate        = 0
  *       slotUtilization   = 1.0  (2/2)
- *       waitlistConvRate  = 1.0  (2 / (2+0))
  */
 describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
   let app: INestApplication;
@@ -104,26 +99,6 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
       },
     });
 
-    // Island A waitlist: 1 CONVERTED + 1 EXPIRED.
-    await prisma.waitlist.create({
-      data: {
-        customerId: islandA.customerId,
-        counselorId: islandA.counselorId,
-        subjectType: SubjectType.CUSTOMER,
-        subjectId: islandA.customerId,
-        status: WaitlistStatus.CONVERTED,
-      },
-    });
-    await prisma.waitlist.create({
-      data: {
-        customerId: islandA.customerId,
-        counselorId: islandA.counselorId,
-        subjectType: SubjectType.CUSTOMER,
-        subjectId: islandA.customerId,
-        status: WaitlistStatus.EXPIRED,
-      },
-    });
-
     // ── Island B: 2 past isOpen slots, both utilised ──────────────────────
     const slotB1 = await prisma.availabilitySlot.create({
       data: {
@@ -160,31 +135,9 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         status: BookingStatus.COMPLETED,
       },
     });
-
-    // Island B waitlist: 2 CONVERTED + 0 EXPIRED.
-    await prisma.waitlist.create({
-      data: {
-        customerId: islandB.customerId,
-        counselorId: islandB.counselorId,
-        subjectType: SubjectType.CUSTOMER,
-        subjectId: islandB.customerId,
-        status: WaitlistStatus.CONVERTED,
-      },
-    });
-    await prisma.waitlist.create({
-      data: {
-        customerId: islandB.customerId,
-        counselorId: islandB.counselorId,
-        subjectType: SubjectType.CUSTOMER,
-        subjectId: islandB.customerId,
-        status: WaitlistStatus.CONVERTED,
-      },
-    });
   });
 
   afterAll(async () => {
-    // cleanupSeeded deletes the customer (cascades bookings + waitlists) and
-    // the counselor (cascades availability slots). No extra cleanup needed.
     await cleanupSeeded(prisma, islandA);
     await cleanupSeeded(prisma, islandB);
     await app.close();
@@ -240,18 +193,6 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         (res.body as { slotUtilization: number }).slotUtilization,
       ).toBeCloseTo(2 / 3);
     });
-
-    it('waitlistConversionRate = 0.5 for counselorA (1 CONVERTED, 1 EXPIRED)', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/admin/analytics')
-        .set('Authorization', `Bearer ${islandA.counselorToken}`);
-
-      expect(res.status).toBe(200);
-      // 1 CONVERTED / (1 + 1) = 0.5
-      expect(
-        (res.body as { waitlistConversionRate: number }).waitlistConversionRate,
-      ).toBeCloseTo(0.5);
-    });
   });
 
   // ── Island B assertions ────────────────────────────────────────────────────
@@ -291,17 +232,6 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         (res.body as { slotUtilization: number }).slotUtilization,
       ).toBeCloseTo(1);
     });
-
-    it('waitlistConversionRate = 1.0 for counselorB (2 CONVERTED, 0 EXPIRED)', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/admin/analytics')
-        .set('Authorization', `Bearer ${islandB.counselorToken}`);
-
-      expect(res.status).toBe(200);
-      expect(
-        (res.body as { waitlistConversionRate: number }).waitlistConversionRate,
-      ).toBeCloseTo(1);
-    });
   });
 
   // ── Cross-island scope isolation ───────────────────────────────────────────
@@ -330,18 +260,6 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
       expect(util).toBeGreaterThan(0.6);
       expect(util).toBeLessThan(0.7);
     });
-
-    it('counselorA waitlistConversionRate is 0.5, not inflated by B waitlist', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/admin/analytics')
-        .set('Authorization', `Bearer ${islandA.counselorToken}`);
-
-      expect(res.status).toBe(200);
-      // B has 2 CONVERTED / 2 = 1.0; A must see 1 CONVERTED / 2 = 0.5.
-      expect(
-        (res.body as { waitlistConversionRate: number }).waitlistConversionRate,
-      ).toBeCloseTo(0.5);
-    });
   });
 
   // ── Zero-denominator guard ─────────────────────────────────────────────────
@@ -357,14 +275,11 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
       const body = res.body as {
         noShowRate: unknown;
         slotUtilization: unknown;
-        waitlistConversionRate: unknown;
       };
       expect(typeof body.noShowRate).toBe('number');
       expect(typeof body.slotUtilization).toBe('number');
-      expect(typeof body.waitlistConversionRate).toBe('number');
       expect(Number.isFinite(body.noShowRate as number)).toBe(true);
       expect(Number.isFinite(body.slotUtilization as number)).toBe(true);
-      expect(Number.isFinite(body.waitlistConversionRate as number)).toBe(true);
     });
   });
 });

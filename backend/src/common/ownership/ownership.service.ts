@@ -8,7 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
  *
  * RBAC answers "may this ROLE call this endpoint?"; this service answers
  * "does this specific resource belong to this specific user?". Feature modules
- * (booking, consultation, waitlist) inject it via the @Global CommonModule.
+ * (booking, consultation) inject it via the @Global CommonModule.
  */
 @Injectable()
 export class OwnershipService {

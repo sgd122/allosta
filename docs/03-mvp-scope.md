@@ -9,7 +9,7 @@
 
 | # | 컴포넌트 | 구현 깊이 | 구체적 내용 | 깊이 선택 근거 |
 |---|---------|----------|------------|--------------|
-| 1 | **Booking (상담 예약)** | **REAL** | 통합 캘린더 조회(`availableCount`), TestResult 기반 예약 생성(PENDING-first), 상담사 확정(PENDING→CONFIRMED), 취소, 동시성 보장(partial unique index + insert-first), waitlist 등록 및 취소 시 FIFO 알림, RBAC + 소유권 검증, 상담사 콘솔 일정 가시성·관리(`NO_SHOW` 포함 표시 + 기간·예약상태 2축 필터 + 날짜별 그룹핑, 가용 슬롯 날짜별 그룹 관리; ADR 0013) | 본 서비스의 존재 이유. 동시성 정확성이 핵심 설계 판단이고, 통합 테스트로 AC2(20 동시→1 성공·19×409)를 증명해야 한다. PENDING-first 모델은 실제 상담 운영에서 상담사가 예약을 검토·확정하는 절차를 반영한다. Waitlist(단순형)는 R4(이탈 근본원인)를 해소하는 최소 구현이며, 미구현 시 문제 정의와의 정합성이 깨진다. |
+| 1 | **Booking (상담 예약)** | **REAL** | 통합 캘린더 조회(`availableCount` — 만석 시 다른 일자·상담사 슬롯 노출), TestResult 기반 예약 생성(PENDING-first), 상담사 확정(PENDING→CONFIRMED), 취소(취소 슬롯 즉시 재노출), 동시성 보장(partial unique index + insert-first), 고객 시간대 중복 예약 차단(GiST EXCLUDE 제약 — 다른 상담사라도 겹치는 시간이면 409; ADR 0015), RBAC + 소유권 검증, 상담사 콘솔 일정 가시성·관리(`NO_SHOW` 포함 표시 + 기간·예약상태 2축 필터 + 날짜별 그룹핑, 가용 슬롯 날짜별 그룹 관리; ADR 0013) | 본 서비스의 존재 이유. 동시성 정확성이 핵심 설계 판단이고, 통합 테스트로 AC2(20 동시→1 성공·19×409)를 증명해야 한다. PENDING-first 모델은 실제 상담 운영에서 상담사가 예약을 검토·확정하는 절차를 반영한다. **셀프서비스 가용 캘린더**가 R4(만석 이탈 근본원인)의 1차 해법이다 — 만석 시 고객이 다른 일자·상담사 슬롯을 직접 예약하면 원래의 "전화 술래잡기 → 조용한 이탈" 마찰이 제거된다. 고객 대기열(waitlist/queue)은 reasoned Phase 2 Non-Goal(§2.8). |
 | 2 | **Consultation Log / CRM (상담 기록 + 챌린지 등록)** | **REAL** | 구조화 기록 입력(summary/recommendation/followUp 구조화 3슬롯 + interestedProducts + outcome{EXPLAINED,GUIDED,PURCHASED} + actions 체크리스트), 지표 연결(ConsultationRecordMetric), **관리 프로그램(챌린지) 등록(`ChallengeEnrollment`, 상담 기록 생성 트랜잭션 내 원자적 등록 — BioCom step-3)**, 본인 담당 예약만 기록 가능(소유권 검증) | 기록 스키마 부재가 R2(전환율 수동집계)의 근본원인이다. 자유 텍스트 단일 `notes`는 상담사마다 기록 깊이·형태가 달라 *내용* 일관성을 강제하지 못한다 — 고정 슬롯(summary/recommendation/followUp) + enum `actions` 체크리스트로 모두 동일한 형태로 기록하게 만든다. 이는 `outcome` enum이 결과를 일관되게 만드는 것과 동일한 메커니즘이다. 덤으로 `actions × outcome`이 쿼리 가능해져 어떤 상담행위가 전환에 기여했는지 세그먼트 분석(R5)을 할 수 있다. "검사 기반" 서비스에서 *어떤 지표를 논의했는가*를 잡지 못하면 Analytics와의 연결고리(R5)가 끊긴다. 또한 BioCom 3-step의 step-3(관리 프로그램 등록, R9)을 같은 트랜잭션에서 캡처해 "상담이 관리 프로그램 등록으로 이어졌는가"를 데이터로 만든다(설계 근거는 ADR 0007). 구조화 입력 + 지표 귀속 + 챌린지 등록이 일반 상담 CRM과의 차별점이므로 REAL로 가야 한다. |
 | 3 | **Analytics (전환 분석)** | **REAL** | 전환율·outcome 분포·상품별 관심 집계, 지표별 전환율 집계(`GET /admin/analytics`), **챌린지 등록 수(`challengeEnrollments`)·등록 전환율(`challengeConversionRate`, 구매→등록, `number\|null`)**, scope 토글(own/all), 실시간 쿼리(별도 집계 테이블 없음) | Analytics가 SIMULATED이면 "자동 집계 대시보드" 요구사항 전체가 미증명이 된다. Booking·CRM이 REAL이므로 집계 쿼리를 실제로 실행할 데이터가 존재하며, seed 기록으로 기대값 일치를 assert할 수 있다. 챌린지 등록 전환율은 BioCom step-3의 가치를 측정하는 지표로, record JOIN을 통해 상담사별 범위 토글을 그대로 준수한다(0=구매했으나 미등록, null=구매 기록 없음을 구분). 별도 OLAP 없이 PostgreSQL 집계 쿼리만으로 MVP 집계를 충족할 수 있다(확장 설계는 Phase 2). |
 | 4 | **Test Results (검사 결과)** | **SEED + READ-ONLY** | seed.ts에 BioCom 7종 검사(대사 6종·음식물 과민·스트레스/노화·영양/중금속·장내 미생물·호르몬·펫 영양) 삽입 — 각 지표에 `referenceRange` + `status(정상/주의/위험)` 포함, `GET /test-results`(본인 + ACCEPTED `FamilyLink` 파트너 검사결과 포함), 업로드 파이프라인은 `UploadPipeline` 인터페이스로 경계 설계 | 검사 결과 업로드·파싱은 외부 시스템(결과지 포맷, OCR, HL7 등) 의존도가 높아 2주 솔로 예산에서 구현하면 핵심 설계(예약·집계)에 쓸 시간을 잠식한다. 반면 "검사 결과가 존재한다"는 전제는 Booking의 TestResult 기반 subject 파생과 Analytics의 지표 연결에 필수다. seed로 전제를 충족하고(참조범위·상태는 결과 해석 UX를 위해 시드에 사전 계산), 인터페이스(`UploadPipeline`)로 확장 경로를 설계 경계로 명시한다. `serviceType`은 자유 문자열을 유지하되 공유 `SERVICE_TYPES` 상수로 표류를 막는다(ADR 0007). 검사결과 화면은 본인/가족 혼선을 없애기 위해 **`내 검사`/`연동 계정` 서브탭**으로 나누고, 개별 결과를 **방문 단위 "검사 결과서"**로 묶어 표시한다(표시 전용, 스키마 무변경 — ADR 0008). |
@@ -45,15 +45,15 @@
 
 ### 2.6 reschedule(예약 변경) 플로우
 
-**제외 근거**: reschedule은 R6(no-show 근본원인)의 대응이다. 그러나 MVP는 리마인더 알림(시뮬레이션)으로 R6에 부분 대응한다. reschedule 자체는 예약 상태 전이(CONFIRMED→RESCHEDULED→RE-CONFIRMED), 기존 슬롯 반환, 새 슬롯 동시성 재보장, waitlist 트리거 재호출 등 복합 플로우를 요구하며, 2주 예산에서 독립적으로 올바르게 구현하기 어렵다. "완성된 플로우"보다 "설계된 경계"가 더 강한 신호이므로, 상태 전이 다이어그램과 API 설계를 `docs/04-system-design.md`에 명시하고 구현은 Phase 2로 배치한다.
+**제외 근거**: reschedule은 R6(no-show 근본원인)의 대응이다. 그러나 MVP는 리마인더 알림(시뮬레이션)으로 R6에 부분 대응한다. reschedule 자체는 예약 상태 전이(CONFIRMED→RESCHEDULED→RE-CONFIRMED), 기존 슬롯 반환, 새 슬롯 동시성 재보장 등 복합 플로우를 요구하며, 2주 예산에서 독립적으로 올바르게 구현하기 어렵다. "완성된 플로우"보다 "설계된 경계"가 더 강한 신호이므로, 상태 전이 다이어그램과 API 설계를 `docs/04-system-design.md`에 명시하고 구현은 Phase 2로 배치한다.
 
 ### 2.7 비동기 상담 대안 (결과지 FAQ·텍스트 Q&A)
 
 **제외 근거**: R7(동기 상담만 존재)에 대한 더 깊은 대응이다. 비동기 상담은 별도 채널(채팅, 게시판, 전문가 답변 큐)을 필요로 하며, 현재 도메인 모델(Booking 기반 동기 예약)과 근본적으로 다른 아키텍처를 요구한다. MVP 범위를 동기 예약 패러다임으로 고정하고, 비동기 채널 확장 경로를 Phase 2 설계 항목으로 기록한다.
 
-### 2.8 waitlist 자동매칭/지능화
+### 2.8 고객 대기열(waitlist/queue) — 공석 통지·FIFO 승격·자동매칭
 
-**제외 근거**: R8(단순 대기열의 한계)에 대한 고도화 대응이다. 단순 waitlist(상담사 단위 FIFO 대기열 + 취소 시 첫 번째 대기자 알림)는 MVP에 포함되며, R4(이탈)의 최소 해소책이다. 자동매칭(상담사·시간 최적 추천, 선호도 기반 매칭)은 추천 알고리즘 또는 인력 최적화 로직을 별도로 요구한다. "단순형 waitlist를 올바르게 구현"한 후 "자동매칭 설계를 Phase 2로 명시"하는 것이 단순형마저 비채택하는 것보다 근본원인에 더 정직한 대응이다.
+**제외 근거**: R4(만석 이탈)의 **1차 대안은 셀프서비스 가용 캘린더**다 — 만석 시 고객이 다른 일자·상담사의 빈 슬롯을 직접 보고 스스로 예약하면(통합 캘린더 + `availableCount`, 컴포넌트 1) 원래의 "전화 술래잡기 → 조용한 이탈" 마찰이 이미 제거된다. limited counselor pool에서는 *가용 탐색*이 대기열보다 더 높은 레버리지의 1차 해법이다. 고객 대기열(원하는 슬롯이 열리면 통지받고 FIFO로 승격받는 큐)은 그 위의 잔여 통지 수요(R8)이며, TTL/FIFO/promotion 상태기계 + 공석 통지 + 오퍼 만료/전환 추적이라는 별도 복잡도를 요구한다. 이 복잡도 대비 MVP 가치가 낮으므로 **의식적으로 Phase 2 Non-Goal로 미룬다**. 자동매칭(상담사·시간 최적 추천)은 그보다 더 위의 추천 알고리즘 과제다. "가용 캘린더로 1차 이탈을 먼저 막고 대기열을 근거 있게 미룬 것"이 단순 미구현과 다른 점이다.
 
 ---
 
@@ -64,9 +64,9 @@
 | R1 | 예약 조정이 사람 간 비동기 통신 | 수동 예약·겹침·누락 | **MVP 구현** | 서비스의 최우선 존재 이유. 셀프서비스 예약 + DB 동시성 보장(PENDING-first + partial unique)이 없으면 전체 가치 명제가 성립하지 않는다. |
 | R2 | 기록 스키마 부재 | 상담 기록 제각각·전환율 수동집계 | **MVP 구현** | 구조화 입력(outcome + 관심 제품)이 없으면 Analytics(R5 연결)의 데이터 기반이 없다. |
 | R3 | 상담 대상 ≠ 계정 소유자 | 가족 결과 대리 상담 | **MVP 구현** | 대칭형 `FamilyLink`(Customer↔Customer) + TestResult 기반 subject 파생(항상 `CUSTOMER`, `subjectId`=검사결과 소유 고객) + `ACCEPTED` 링크 소유권 검증으로 경계를 유지한다. |
-| R4 | 공급 희소 + 수요 집중 → 이탈 | 꽉 찬 시간대에 대안 없음 | **MVP 구현 (단순형 + 전환 추적)** | 단순형(상담사 단위 FIFO + 취소 시 1건 알림) + TTL advisory 오퍼(`offeredSlotId`, `offerExpiresAt`) + `CONVERTED`/`EXPIRED` 전환 추적으로 "알림이 실제 예약으로 이어졌는가"를 측정한다. 자동매칭 고도화(R8)만 Phase 2로 분리한다(ADR 0006). |
+| R4 | 공급 희소 + 수요 집중 → 이탈 | 꽉 찬 시간대에 1차 대안 없음 | **MVP 구현 (가용 캘린더)** | 1차 대안 = **셀프서비스 가용 캘린더**(통합 캘린더 + `availableCount`). 만석 시 고객이 다른 일자·상담사 슬롯을 직접 예약하고, 취소된 슬롯은 즉시 가용 목록에 재노출된다 → "전화 술래잡기 → 조용한 이탈" 마찰 제거. 고객 대기열·자동매칭(R8)은 reasoned Phase 2 Non-Goal. |
 | R5 | 기록이 논의 지표를 포착하지 않음 | 전환이 검사 결과와 분리 | **MVP 구현** | "검사 기반" 서비스의 본질이다. `ConsultationRecordMetric` 연결 없이는 Analytics가 일반 CRM과 구별되지 않는다. 지표별 전환 집계가 본 플랫폼의 차별점이므로 누락 불가. |
 | R6 | 잊어버림 + 변경 마찰 | 당일 no-show | **MVP 구현** (리마인더+no-show 스윕=MVP, reschedule=Phase 2 설계) | 리마인더(시뮬레이션) + 자동 no-show 전이(`sweepNoShows`) + 상담사 수동 override(`PATCH /bookings/:id/attendance`)로 no-show 루프를 닫는다. reschedule 복합 플로우는 Phase 2로 분리해 설계 경계로 명시한다(ADR 0006). |
 | R7 | 동기 상담만 존재 | 이탈의 더 깊은 대안 없음 | **Phase 2 (설계)** | 별도 채널 아키텍처가 필요하며, 동기 예약 패러다임 MVP와 병행 구현 시 범위가 급격히 확대된다. 확장 경로 명시로 "알고 미뤘음"을 증명한다. |
-| R8 | 단순 대기열의 한계 | waitlist 지능화 필요 | **Phase 2 (설계)** | 단순 waitlist(R4)를 올바르게 먼저 구현하고, 자동매칭 알고리즘은 별도 설계 과제로 분리한다. |
+| R8 | 가용 캘린더로도 원하는 슬롯이 끝내 없으면 잔여 수요 소실 | "원하는 슬롯이 열리면 통지" 잔여 통지 수요 | **Phase 2 (Non-Goal, 설계)** | 가용 캘린더(R4)가 만석 1차 이탈을 막은 뒤의 잔여 수요다. 고객 대기열(공석 통지·FIFO 승격·자동매칭)은 TTL/FIFO/promotion 복잡도 대비 MVP 가치가 낮아 reasoned Non-Goal로 미루고, 설계 경계만 명시한다. |
 | R9 | step-3(관리 프로그램 등록) 추적 부재 | 구매가 챌린지 등록으로 이어졌는지 측정 불가 | **MVP 구현 (BioCom finalization)** | BioCom 3-step의 step-3을 `Challenge`(시드 카탈로그) + `ChallengeEnrollment`(상담 기록 생성 시 원자적 등록)로 모델링하고, Analytics에 등록 수·등록 전환율을 추가한다. 추가는 기존 스키마/JSONB/시드에 비파괴적(additive)이며, 등록 편집·상태 전이 UX만 Phase 2로 분리한다(ADR 0007). |

@@ -94,17 +94,10 @@ export default function AdminDashboardPage() {
               tone="teal"
               delay="120ms"
             />
-            <OpsRateCard
-              label="대기 전환율"
-              sublabel="대기 → 예약 전환 (만료 대비)"
-              value={data.waitlistConversionRate}
-              tone="amber"
-              delay="180ms"
-            />
             <ChallengeConversionCard
               enrollments={data.challengeEnrollments}
               conversionRate={data.challengeConversionRate}
-              delay="240ms"
+              delay="180ms"
             />
           </Flex>
 

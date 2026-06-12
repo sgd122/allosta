@@ -41,7 +41,7 @@ export function useSlots(counselorId: string) {
   });
 }
 
-/** Cancel a booking; refreshes own bookings, the availability calendar, and the waitlist. */
+/** Cancel a booking; refreshes own bookings and the availability calendar. */
 export function useCancelBookingMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -58,7 +58,7 @@ export function useCreateBookingMutation() {
   return useMutation({
     mutationFn: (vars: { slotId: string; testResultId: string }) => createBooking(vars),
     onSuccess: () => {
-      void invalidateAfterBookingCreated(queryClient, { source: 'calendar-slot' });
+      void invalidateAfterBookingCreated(queryClient);
     },
   });
 }

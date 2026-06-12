@@ -44,7 +44,6 @@ async function main(): Promise<void> {
   await prisma.consultationRecordProduct.deleteMany();
   await prisma.consultationRecord.deleteMany();
   await prisma.notification.deleteMany();
-  await prisma.waitlist.deleteMany();
   await prisma.booking.deleteMany();
   await prisma.availabilitySlot.deleteMany();
   await prisma.testResult.deleteMany();

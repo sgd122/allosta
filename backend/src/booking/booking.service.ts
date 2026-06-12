@@ -16,7 +16,6 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OwnershipService } from '../common/ownership/ownership.service';
-import { WaitlistService } from '../waitlist/waitlist.service';
 
 const DEFAULT_REMINDER_LEAD_MINUTES = 30;
 const MS_PER_MINUTE = 60_000;
@@ -38,14 +37,13 @@ export interface MyBookingDto {
 
 /**
  * Booking domain: confirmation, concurrency-safe creation (AC2), cancellation
- * with FIFO waitlist promotion (AC10), and ops lifecycle sweeps (AC-N3/N4/N6).
+ * (frees the slot, no promotion), and ops lifecycle sweeps (AC-N3/N4/N6).
  */
 @Injectable()
 export class BookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
-    private readonly waitlist: WaitlistService,
     private readonly config: ConfigService,
   ) {}
 
@@ -55,8 +53,7 @@ export class BookingService {
    * Concurrency is handled DB-side via the partial unique index
    * `booking_slot_active_unique`. Insert-first / catch-P2002 pattern avoids
    * TOCTOU. Confirmation + reminder notifications are created in the same
-   * transaction. Any NOTIFIED waitlist row for this customer+counselor+slot is
-   * atomically converted to CONVERTED (AC-W4).
+   * transaction.
    */
   async create(
     customerId: string,
@@ -84,7 +81,13 @@ export class BookingService {
 
     const slot = await this.prisma.availabilitySlot.findUnique({
       where: { id: slotId },
-      select: { id: true, isOpen: true, startAt: true, counselorId: true },
+      select: {
+        id: true,
+        isOpen: true,
+        startAt: true,
+        endAt: true,
+        counselorId: true,
+      },
     });
 
     if (!slot) {
@@ -132,16 +135,6 @@ export class BookingService {
           },
         });
 
-        // Convert any NOTIFIED waitlist entry that matches this booking
-        // (AC-W4). No-op if the customer had no offer or the offer was for a
-        // different slot. Atomic with the booking insert.
-        await this.waitlist.convertOnBooking(
-          tx,
-          customerId,
-          slot.counselorId,
-          slotId,
-        );
-
         return booking;
       });
     } catch (error: unknown) {
@@ -156,9 +149,7 @@ export class BookingService {
   }
 
   /**
-   * Cancels a booking owned by the current customer (sets CANCELLED) and, in
-   * the same transaction, promotes the oldest waiting customer for that
-   * counselor (AC10). Atomic: cancel + promote + SLOT_OPENED notification.
+   * derived-available again. There is no waitlist promotion.
    */
   async cancel(customerId: string, bookingId: string): Promise<Booking> {
     const booking = await this.prisma.booking.findUnique({
@@ -168,7 +159,6 @@ export class BookingService {
         slotId: true,
         customerId: true,
         status: true,
-        slot: { select: { counselorId: true } },
       },
     });
 
@@ -181,8 +171,8 @@ export class BookingService {
       );
     }
     // Only an ACTIVE booking can be cancelled. Re-cancelling a CANCELLED or
-    // reverting a COMPLETED booking would corrupt status history AND fire a
-    // spurious waitlist promotion (no slot actually frees) — reject with 409.
+    // reverting a COMPLETED/NO_SHOW booking would corrupt status history —
+    // reject with 409. A normal cancel of a PENDING/CONFIRMED booking succeeds.
     if (
       booking.status !== BookingStatus.PENDING &&
       booking.status !== BookingStatus.CONFIRMED
@@ -190,21 +180,9 @@ export class BookingService {
       throw new ConflictException('Only an active booking can be cancelled');
     }
 
-    const counselorId = booking.slot.counselorId;
-
-    return this.prisma.$transaction(async (tx) => {
-      const cancelled = await tx.booking.update({
-        where: { id: bookingId },
-        data: { status: BookingStatus.CANCELLED },
-      });
-
-      await this.waitlist.promoteOnCancellation(
-        counselorId,
-        cancelled.slotId,
-        tx,
-      );
-
-      return cancelled;
+    return this.prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: BookingStatus.CANCELLED },
     });
   }
 

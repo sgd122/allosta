@@ -6,7 +6,6 @@ import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { BookingModule } from './booking/booking.module';
-import { WaitlistModule } from './waitlist/waitlist.module';
 import { ConsultationModule } from './consultation/consultation.module';
 import { CustomerModule } from './customer/customer.module';
 import { TestResultModule } from './test-result/test-result.module';
@@ -25,7 +24,6 @@ import { OpsSchedulerModule } from './ops-scheduler/ops-scheduler.module';
     // FEATURE MODULES
     AvailabilityModule,
     BookingModule,
-    WaitlistModule,
     ConsultationModule,
     CustomerModule,
     TestResultModule,

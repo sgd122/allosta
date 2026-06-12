@@ -83,7 +83,6 @@ export class NotificationService {
         id: notification.id,
         type: notification.type,
         bookingId: notification.bookingId ?? undefined,
-        waitlistId: notification.waitlistId ?? undefined,
         scheduledAt: notification.scheduledAt ?? undefined,
       };
 
@@ -105,19 +104,12 @@ export class NotificationService {
 
   /**
    * Returns notifications visible to a given customer — those linked to the
-   * customer's own bookings or waitlist entries, ordered most-recent first.
+   * customer's own bookings, ordered most-recent first.
    */
   async getForCustomer(customerId: string): Promise<Notification[]> {
     return this.prisma.notification.findMany({
       where: {
-        OR: [
-          {
-            booking: { customerId },
-          },
-          {
-            waitlist: { customerId },
-          },
-        ],
+        booking: { customerId },
       },
       orderBy: { createdAt: 'desc' },
     });
