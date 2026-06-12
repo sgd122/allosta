@@ -24,6 +24,8 @@ import { formatPercent } from '@/shared/lib/format';
 import { OpsRateCard } from './OpsRateCard';
 import { ChallengeConversionCard } from './ChallengeConversionCard';
 import { BookingFunnelCard } from './BookingFunnelCard';
+import { BriefProductivityCard } from './BriefProductivityCard';
+import { SummarySweepButton } from '@/features/trigger-summary-sweep';
 import { RecordsList } from './RecordsList';
 import { DrilldownDialog } from './DrilldownDialog';
 
@@ -38,6 +40,7 @@ export default function AdminDashboardPage() {
         eyebrow="애널리틱스"
         title="상담 전환 대시보드"
         description="상담 결과와 지표가 실제 구매로 이어지는 흐름을 한눈에 살펴보세요."
+        action={<SummarySweepButton />}
       />
 
       {isLoading && (
@@ -108,6 +111,12 @@ export default function AdminDashboardPage() {
           </Flex>
 
           <BookingFunnelCard funnel={data.funnel} />
+
+          <BriefProductivityCard
+            briefOpenRate={data.briefOpenRate}
+            aiSummaryCount={data.aiSummaryCount}
+            aiSummaryUpgradedRatio={data.aiSummaryUpgradedRatio}
+          />
 
           <Flex gap="4" direction={{ initial: 'column', sm: 'row' }}>
             <Card size="3" className="rise flex-1" style={{ animationDelay: '60ms' }}>

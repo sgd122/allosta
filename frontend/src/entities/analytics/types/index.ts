@@ -26,6 +26,15 @@ export interface Analytics {
   waitlistConversionRate: number;
   challengeEnrollments: number;
   challengeConversionRate: number | null;
+  /**
+   * Fraction of bookings (CONFIRMED | COMPLETED | NO_SHOW) whose pre-consultation
+   * brief was opened by the counselor (AC-P7). Zero when the denominator is zero.
+   */
+  briefOpenRate: number;
+  /** Total ConsultationAiSummary rows (FALLBACK + UPGRADED), scoped (AC-P7 aux). */
+  aiSummaryCount: number;
+  /** UPGRADED / total AI-summary rows. Zero when aiSummaryCount is zero (AC-P7 aux). */
+  aiSummaryUpgradedRatio: number;
 }
 
 export interface RecordListItem {

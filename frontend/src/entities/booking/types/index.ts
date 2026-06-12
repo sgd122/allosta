@@ -14,6 +14,16 @@ export interface Booking {
   status?: BookingStatus;
 }
 
+/**
+ * Body for POST /bookings. `concern` is the customer's optional pre-question,
+ * surfaced (write-only) to the counselor in the pre-consultation brief.
+ */
+export interface CreateBookingInput {
+  slotId: string;
+  testResultId: string;
+  concern?: string;
+}
+
 export interface AggregatedSlot {
   slotId: string;
   counselorId: string;

@@ -21,6 +21,7 @@ import { useConfirmBookingMutation, useSetAttendanceMutation } from '@/entities/
 import { toFriendlyMessage } from '@/shared/api';
 import { formatDay, formatTime } from '@/shared/lib/format';
 import { ConsultationRecordForm } from '@/features/create-consultation-record';
+import { BriefPanel } from '@/features/view-booking-brief';
 import { BOOKING_STATUS_BADGE } from '../constants';
 import type { RowProps } from '../types';
 import { RecordDetailPanel } from './RecordDetailPanel';
@@ -246,6 +247,9 @@ export function ScheduleRow({ entry, index, isOpen, onToggle, onRecorded, existi
           ) : (
             <Box pt="4">
               <Separator size="4" mb="4" />
+              <Box mb="5">
+                <BriefPanel bookingId={entry.bookingId} active={isOpen} />
+              </Box>
               <ConsultationRecordForm bookingId={entry.bookingId} onSuccess={onRecorded} />
             </Box>
           )}

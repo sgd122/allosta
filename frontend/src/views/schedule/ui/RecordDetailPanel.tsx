@@ -1,6 +1,6 @@
 import { Badge, Box, Button, Flex, Separator, Text } from '@radix-ui/themes';
 import { Pencil1Icon } from '@radix-ui/react-icons';
-import { CONSULTATION_ACTION_LABELS } from '@/entities/consultation-record';
+import { AiSummaryPanel, CONSULTATION_ACTION_LABELS } from '@/entities/consultation-record';
 import type { CounselorRecordEntry } from '@/entities/consultation-record';
 import { FieldLabel, RecordTextField } from '@/shared/ui';
 import { OUTCOME_COLOR, OUTCOME_LABEL } from '../constants';
@@ -22,6 +22,12 @@ export function RecordDetailPanel({ record, onEdit }: { record: CounselorRecordE
           <Pencil1Icon /> 수정
         </Button>
       </Flex>
+
+      {record.aiSummary && (
+        <Box mb="4">
+          <AiSummaryPanel summary={record.aiSummary} />
+        </Box>
+      )}
 
       <RecordTextField label="주요 상담 내용" value={record.summary} mb="4" />
       <RecordTextField label="권고 사항" value={record.recommendation} mb="4" />

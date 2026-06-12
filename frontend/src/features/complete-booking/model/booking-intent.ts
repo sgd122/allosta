@@ -1,5 +1,5 @@
 import { representativeResultId, type TestReport } from '@/entities/test-result/lib/reports';
-import type { AggregatedSlot } from '@/entities/booking';
+import type { AggregatedSlot, CreateBookingInput } from '@/entities/booking';
 import type { BookingIntent, BookingIntentSource, WaitlistOfferSlot } from '../types';
 
 export type { BookingIntentSource, BookingIntent, WaitlistOfferSlot };
@@ -29,12 +29,16 @@ export function bookingIntentFromWaitlistOffer({
   };
 }
 
-export function bookingInputForReport(intent: BookingIntent, report: TestReport): {
-  slotId: string;
-  testResultId: string;
-} {
+export function bookingInputForReport(
+  intent: BookingIntent,
+  report: TestReport,
+  concern?: string,
+): CreateBookingInput {
+  const trimmed = concern?.trim();
   return {
     slotId: intent.slotId,
     testResultId: representativeResultId(report),
+    // Omit the field entirely when blank so the optional DTO stays untouched.
+    ...(trimmed ? { concern: trimmed } : {}),
   };
 }
