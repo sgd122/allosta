@@ -1,9 +1,10 @@
 'use client';
 
-import { Badge, Box, Callout, Flex, Separator, Spinner, Text } from '@radix-ui/themes';
+import { Badge, Box, Callout, Card, Flex, Separator, Spinner, Text } from '@radix-ui/themes';
 import {
   ChatBubbleIcon,
   ExclamationTriangleIcon,
+  MagicWandIcon,
   PersonIcon,
 } from '@radix-ui/react-icons';
 import {
@@ -26,8 +27,9 @@ type Props = {
  * The counselor's read-only pre-consultation brief. Mounting with `active` true
  * triggers the GET, which the server uses to mark the booking opened (the
  * analytics brief-open-rate numerator). Surfaces, in order: the customer's
- * 사전 질문(concern), interpreted indicators (abnormal-first), past consultation
- * records (newest first), and ACCEPTED family context.
+ * 사전 질문(concern), the AI 권장 진행 방향(pre-consultation guidance), interpreted
+ * indicators (abnormal-first), past consultation records (newest first), and
+ * ACCEPTED family context.
  */
 export function BriefPanel({ bookingId, active }: Props) {
   const { data, isLoading, isError, error } = useBookingBrief(bookingId, active);
@@ -74,6 +76,29 @@ export function BriefPanel({ bookingId, active }: Props) {
             {data.concern}
           </Callout.Text>
         </Callout.Root>
+      )}
+
+      {data.guidance && (
+        <Card size="2" mb="4" className="border border-violet-5 bg-violet-2">
+          <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+            <Flex align="center" gap="2">
+              <MagicWandIcon className="text-violet-11" />
+              <Text size="2" weight="medium" className="text-violet-12">
+                AI 권장 진행 방향
+              </Text>
+            </Flex>
+            {data.guidance.status === 'UPGRADED' ? (
+              <Badge color="violet" variant="soft" size="1">
+                AI{data.guidance.model ? ` · ${data.guidance.model}` : ''}
+              </Badge>
+            ) : (
+              <Badge color="gray" variant="soft" size="1">기본 가이드</Badge>
+            )}
+          </Flex>
+          <Text size="2" as="p" className="whitespace-pre-line text-violet-12">
+            {data.guidance.content}
+          </Text>
+        </Card>
       )}
 
       <Box mb="4">

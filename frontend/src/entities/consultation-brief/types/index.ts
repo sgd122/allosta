@@ -32,6 +32,19 @@ export interface BriefFamilyContext {
 }
 
 /**
+ * AI-generated guidance for the *upcoming* consultation, surfaced in the
+ * counselor's pre-consultation brief. FALLBACK is deterministic template
+ * guidance (ensured on open); UPGRADED is local gemma. `model` is the model
+ * name when UPGRADED, null on FALLBACK. Null only when the booking is
+ * unloadable.
+ */
+export interface BriefGuidance {
+  status: 'FALLBACK' | 'UPGRADED';
+  model: string | null;
+  content: string;
+}
+
+/**
  * The read-only, deterministic pre-consultation brief for a booking. Every
  * field is a derived projection of existing data (TestResult metrics, past
  * ConsultationRecords, ACCEPTED FamilyLink context, the customer's optional
@@ -47,4 +60,9 @@ export interface BookingBrief {
   indicators: BriefIndicator[];
   pastRecords: BriefPastRecord[];
   family: BriefFamilyContext[];
+  /**
+   * AI suggested approach for the upcoming consultation. Null only when the
+   * booking is unloadable; otherwise always present (FALLBACK guaranteed).
+   */
+  guidance: BriefGuidance | null;
 }

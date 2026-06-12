@@ -3,6 +3,7 @@ export type {
   BriefIndicator,
   BriefPastRecord,
   BriefFamilyContext,
+  BriefGuidance,
 } from './types';
 export { getBookingBrief } from './api';
 export { consultationBriefKeys } from './api/keys';
