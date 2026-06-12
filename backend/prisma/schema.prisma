@@ -159,6 +159,14 @@ model Booking {
   // subject (subjectType/subjectId) is derived from this result's owner.
   testResultId String?
   status       BookingStatus @default(PENDING)
+  // Optional customer pre-question (사전질문). Surfaced write-only into the
+  // counselor brief (consultation prep, ADR 0014) — never read back to the
+  // customer. Length-bounded at the DTO layer (@MaxLength).
+  concern      String?
+  // First time the assigned counselor opened the pre-consultation brief
+  // (brief-open-rate numerator, AC-P7). Set once via a conditional updateMany
+  // (briefOpenedAt: null guard) so concurrent opens stay DB-idempotent.
+  briefOpenedAt DateTime?
   createdAt    DateTime      @default(now())
 
   // NOTE: the partial unique index on (slotId) WHERE status IN ('PENDING','CONFIRMED')
@@ -192,8 +200,36 @@ model ConsultationRecord {
   products    ConsultationRecordProduct[]
   metrics     ConsultationRecordMetric[]
   enrollments ChallengeEnrollment[]
+  // Post-consultation AI summary (ADR 0014). Distinct from the counselor-authored
+  // `summary` above: this is machine-generated, has a FALLBACK→UPGRADED lifecycle,
+  // and is an idempotent upsert target keyed by recordId @unique.
+  aiSummary   ConsultationAiSummary?
 
   @@index([counselorId])
+}
+
+// Post-consultation AI summary (ADR 0014). Generated AFTER createRecord commits —
+// never inside the record transaction (reproducibility: golden path must pass
+// without Ollama). The deterministic template FALLBACK is persisted synchronously
+// right after createRecord; the OpsScheduler @Interval sweep upgrades FALLBACK rows
+// to UPGRADED when local Ollama (gemma3n:e4b) is detected. The row's absence means
+// "not yet generated" without a sentinel; `status` drives the lifecycle.
+enum AiSummaryStatus {
+  FALLBACK
+  UPGRADED
+}
+
+model ConsultationAiSummary {
+  id        String          @id @default(cuid())
+  recordId  String          @unique
+  status    AiSummaryStatus @default(FALLBACK)
+  // The model name when UPGRADED (e.g. "gemma3n:e4b"); null on FALLBACK.
+  model     String?
+  content   String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  record ConsultationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
 }
 
 model Product {
