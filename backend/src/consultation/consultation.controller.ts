@@ -17,6 +17,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/interfaces/jwt-payload.interface';
 import {
+  BookingBrief,
   ChallengeCatalogItem,
   ConsultationRecordWithRelations,
   ConsultationService,
@@ -63,6 +64,19 @@ export class ConsultationController {
     @Param('bookingId') bookingId: string,
   ): Promise<SubjectTestResultDto[]> {
     return this.consultationService.getBookingSubjectTestResults(
+      user.counselorId!,
+      bookingId,
+    );
+  }
+
+  @Get('counselor/bookings/:bookingId/brief')
+  @Roles(Role.COUNSELOR)
+  @ApiOperation({ summary: 'Assemble the read-only pre-consultation brief and mark it opened (AC-P1/AC-P7)' })
+  getBookingBrief(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('bookingId') bookingId: string,
+  ): Promise<BookingBrief> {
+    return this.consultationService.getBookingBrief(
       user.counselorId!,
       bookingId,
     );

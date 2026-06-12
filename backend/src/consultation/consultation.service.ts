@@ -5,10 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AiSummaryStatus,
   BookingStatus,
   ConsultationRecord,
   ConsultationRecordMetric,
   ConsultationRecordProduct,
+  FamilyLinkStatus,
+  Outcome,
   SubjectType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +21,7 @@ import {
   MetricRefDto,
   UpdateConsultationRecordDto,
 } from './dto/create-consultation-record.dto';
+import { SummaryService } from './summary/summary.service';
 
 /**
  * A booking on the counselor's own schedule (AC4/AC14 "본인 일정 확인").
@@ -101,6 +105,58 @@ export interface CounselorRecordEntry {
   customerName: string;
   products: { productId: string; name: string; category: string }[];
   metrics: { testResultId: string; metricKey: string }[];
+  // Machine-generated post-consultation summary (ADR 0014). Null until the
+  // post-commit FALLBACK persists; status flips FALLBACK→UPGRADED via the sweep.
+  aiSummary: {
+    status: AiSummaryStatus;
+    model: string | null;
+    content: string;
+  } | null;
+}
+
+/** A single out-of-range / interpreted indicator surfaced in the brief (AC-P1). */
+export interface BriefIndicator {
+  testResultId: string;
+  serviceType: string;
+  metricKey: string;
+  label: string | null;
+  value: number | string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  status: string | null;
+}
+
+/** A prior consultation record for the brief subject (newest first, AC-P1). */
+export interface BriefPastRecord {
+  id: string;
+  createdAt: Date;
+  outcome: Outcome;
+  summary: string;
+  recommendation: string;
+}
+
+/** One ACCEPTED family member linked to the subject (read-only context). */
+export interface BriefFamilyContext {
+  customerId: string;
+  name: string;
+}
+
+/**
+ * Read-only, deterministic pre-consultation brief for a booking (AC-P1). All
+ * fields are derived projections of existing data (TestResult metrics, past
+ * ConsultationRecords, ACCEPTED FamilyLink context, booking.concern) — no new
+ * source of truth. `concern` is write-only into this brief: it is surfaced to
+ * the counselor here but never read back to the customer.
+ */
+export interface BookingBrief {
+  bookingId: string;
+  subjectType: SubjectType;
+  subjectId: string;
+  subjectName: string;
+  concern: string | null;
+  indicators: BriefIndicator[];
+  pastRecords: BriefPastRecord[];
+  family: BriefFamilyContext[];
 }
 
 @Injectable()
@@ -108,6 +164,7 @@ export class ConsultationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
+    private readonly summary: SummaryService,
   ) {}
 
   /**
@@ -234,7 +291,7 @@ export class ConsultationService {
     }
 
     // (d) Persist the record and its joins in a single transaction.
-    return this.prisma.$transaction(async (tx) => {
+    const record = await this.prisma.$transaction(async (tx) => {
       const record = await tx.consultationRecord.create({
         data: {
           bookingId: dto.bookingId,
@@ -296,6 +353,15 @@ export class ConsultationService {
 
       return { ...record, products, metrics };
     });
+
+    // (e) Post-consultation AI summary (ADR 0014). Run AFTER the transaction
+    // commits — never inside it. The template FALLBACK is synchronous and
+    // deterministic (no Ollama dependency), so this guarantees exactly one
+    // summary row on the response path without blocking on the LLM. The gemma
+    // UPGRADE happens later via the OpsScheduler sweep, off the request path.
+    await this.summary.persistFallback(record.id);
+
+    return record;
   }
 
   /**
@@ -444,6 +510,153 @@ export class ConsultationService {
   }
 
   /**
+   * Assembles the read-only, deterministic pre-consultation brief for a booking
+   * (AC-P1) and records the counselor's first open (AC-P7). Ownership reuses
+   * `assertBookingOwnedByCounselor` — no new auth surface (AC-P2).
+   *
+   * The brief is a pure projection of existing data:
+   *  - indicators: the subject's TestResult metrics (sorted `metricKey asc`),
+   *  - pastRecords: prior ConsultationRecords for the subject (`createdAt desc`),
+   *  - family: ACCEPTED FamilyLink members (inviter/invitee pairs, like ownership),
+   *  - concern: the customer's optional pre-question (write-only into the brief).
+   *
+   * `briefOpenedAt` is set via a conditional `updateMany` guarded on
+   * `briefOpenedAt: null` so concurrent opens stay DB-idempotent (no read-then-
+   * write; the second call updates zero rows).
+   */
+  async getBookingBrief(
+    counselorId: string,
+    bookingId: string,
+  ): Promise<BookingBrief> {
+    await this.ownership.assertBookingOwnedByCounselor(counselorId, bookingId);
+
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        subjectType: true,
+        subjectId: true,
+        concern: true,
+      },
+    });
+    if (!booking) {
+      throw new ForbiddenException('Booking not found');
+    }
+
+    const [testResults, pastRecords, family, subjectName] = await Promise.all([
+      this.prisma.testResult.findMany({
+        where: {
+          subjectType: booking.subjectType,
+          subjectId: booking.subjectId,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          serviceType: true,
+          metrics: true,
+        },
+      }),
+      this.prisma.consultationRecord.findMany({
+        where: {
+          booking: {
+            subjectType: booking.subjectType,
+            subjectId: booking.subjectId,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          createdAt: true,
+          outcome: true,
+          summary: true,
+          recommendation: true,
+        },
+      }),
+      this.resolveFamilyContext(booking.subjectType, booking.subjectId),
+      this.resolveSubjectName(booking.subjectType, booking.subjectId),
+    ]);
+
+    const indicators = testResults
+      .flatMap((tr) =>
+        this.normalizeMetrics(tr.metrics).map((m) => ({
+          testResultId: tr.id,
+          serviceType: tr.serviceType,
+          metricKey: m.metricKey,
+          label: m.label,
+          value: m.value,
+          unit: m.unit,
+          referenceRange: m.referenceRange,
+          status: m.status,
+        })),
+      )
+      .sort((a, b) => a.metricKey.localeCompare(b.metricKey));
+
+    // DB-idempotent first-open marker: only writes when still null (AC-P7).
+    await this.prisma.booking.updateMany({
+      where: { id: bookingId, briefOpenedAt: null },
+      data: { briefOpenedAt: new Date() },
+    });
+
+    return {
+      bookingId,
+      subjectType: booking.subjectType,
+      subjectId: booking.subjectId,
+      subjectName,
+      concern: booking.concern,
+      indicators,
+      pastRecords,
+      family,
+    };
+  }
+
+  /**
+   * Returns ACCEPTED family members directly linked to the subject (one hop,
+   * live). Mirrors OwnershipService.assertSubjectOwnedByCustomer: ACCEPTED
+   * status only, reading the inviter/invitee pair in either direction.
+   */
+  private async resolveFamilyContext(
+    subjectType: SubjectType,
+    subjectId: string,
+  ): Promise<BriefFamilyContext[]> {
+    if (subjectType !== SubjectType.CUSTOMER) {
+      return [];
+    }
+
+    const links = await this.prisma.familyLink.findMany({
+      where: {
+        status: FamilyLinkStatus.ACCEPTED,
+        OR: [
+          { inviterCustomerId: subjectId },
+          { inviteeCustomerId: subjectId },
+        ],
+      },
+      select: { inviterCustomerId: true, inviteeCustomerId: true },
+    });
+
+    const memberIds = new Set<string>();
+    for (const link of links) {
+      if (link.inviterCustomerId === subjectId) {
+        if (link.inviteeCustomerId) {
+          memberIds.add(link.inviteeCustomerId);
+        }
+      } else {
+        memberIds.add(link.inviterCustomerId);
+      }
+    }
+    if (memberIds.size === 0) {
+      return [];
+    }
+
+    const members = await this.prisma.customer.findMany({
+      where: { id: { in: [...memberIds] } },
+      select: { id: true, name: true },
+    });
+
+    return members
+      .map((m) => ({ customerId: m.id, name: m.name }))
+      .sort((a, b) => a.customerId.localeCompare(b.customerId));
+  }
+
+  /**
    * Returns all of the counselor's own written records with enriched relations
    * (product names, metric keys, slot time, subject name) for AC16 re-view.
    */
@@ -467,6 +680,7 @@ export class ConsultationService {
           },
         },
         metrics: { select: { testResultId: true, metricKey: true } },
+        aiSummary: { select: { status: true, model: true, content: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -498,6 +712,13 @@ export class ConsultationService {
           testResultId: m.testResultId,
           metricKey: m.metricKey,
         })),
+        aiSummary: r.aiSummary
+          ? {
+              status: r.aiSummary.status,
+              model: r.aiSummary.model,
+              content: r.aiSummary.content,
+            }
+          : null,
       })),
     );
   }
