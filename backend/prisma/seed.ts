@@ -381,6 +381,9 @@ async function main(): Promise<void> {
       subjectId: customer.id,
       testResultId: metabolicResult.id,
       status: BookingStatus.COMPLETED,
+      // Denormalized slot window for the customer-no-overlap constraint (ADR 0015).
+      slotStartAt: demoSlot.startAt,
+      slotEndAt: demoSlot.endAt,
     },
   });
   const demoRecord = await prisma.consultationRecord.create({

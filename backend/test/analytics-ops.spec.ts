@@ -87,6 +87,8 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: islandA.customerId,
         status: BookingStatus.COMPLETED,
+        slotStartAt: pastStart,
+        slotEndAt: pastEnd,
       },
     });
     await prisma.booking.create({
@@ -96,6 +98,8 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: islandA.customerId,
         status: BookingStatus.NO_SHOW,
+        slotStartAt: pastStart,
+        slotEndAt: pastEnd,
       },
     });
 
@@ -124,6 +128,8 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: islandB.customerId,
         status: BookingStatus.COMPLETED,
+        slotStartAt: pastStart,
+        slotEndAt: pastEnd,
       },
     });
     await prisma.booking.create({
@@ -133,11 +139,15 @@ describe('Analytics ops funnel + rates (scope=own, AC-A1..A4)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: islandB.customerId,
         status: BookingStatus.COMPLETED,
+        slotStartAt: pastStart,
+        slotEndAt: pastEnd,
       },
     });
   });
 
   afterAll(async () => {
+    // cleanupSeeded deletes the customer (cascades bookings) and the counselor
+    // (cascades availability slots). No extra cleanup needed.
     await cleanupSeeded(prisma, islandA);
     await cleanupSeeded(prisma, islandB);
     await app.close();

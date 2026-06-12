@@ -77,6 +77,8 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
         // relative's id to model a family-data consultation.
         subjectId: subjectId ?? islandA.customerId,
         status,
+        slotStartAt: slot.startAt,
+        slotEndAt: slot.endAt,
         ...(concern !== undefined && { concern }),
       },
     });

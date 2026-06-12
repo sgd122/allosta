@@ -51,6 +51,11 @@ describe("Analytics brief-open-rate (AC-P7)", () => {
       status: BookingStatus,
       briefOpenedAt: Date | null,
     ): Promise<string> => {
+      // Mirror the denormalized slot window the service sets (ADR 0015).
+      const slot = await prisma.availabilitySlot.findUniqueOrThrow({
+        where: { id: slotId },
+        select: { startAt: true, endAt: true },
+      });
       const b = await prisma.booking.create({
         data: {
           slotId,
@@ -59,6 +64,8 @@ describe("Analytics brief-open-rate (AC-P7)", () => {
           subjectId: island.customerId,
           status,
           briefOpenedAt,
+          slotStartAt: slot.startAt,
+          slotEndAt: slot.endAt,
         },
       });
       return b.id;

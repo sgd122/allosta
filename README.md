@@ -51,12 +51,14 @@ NestJS (:3000) ──Prisma──▶ PostgreSQL (:5432, docker)
   │     ├── 브리핑 조립 (GET /counselor/bookings/:id/brief — 결정론, briefOpenedAt 1회 기록)
   │     └── GuidanceModule (브리핑 열람 시 FALLBACK 가이던스 보장 → OpsScheduler 스윕으로 UPGRADED)
   ├── Analytics (scope 토글: own/all + 운영 퍼널/지표 + 챌린지 등록 수/전환율 + briefOpenRate)
+  ├── OpsScheduler (@Interval 타이밍 래퍼 — sweepNoShows / sweepStalePending / sweepPendingUpgrades)
   └── Notification (시뮬) — @nestjs/schedule
         └── Channel 어댑터: Console·In-App(실동작) / Email·SMS(stub)
 ```
 
 **핵심 설계 결정 요약:**
 
+- **동시성·무결성**: `booking_slot_active_unique` 부분 unique 인덱스(`WHERE status IN ('PENDING','CONFIRMED')`) + **insert-first → catch P2002 → 409** 패턴. PENDING 상태도 슬롯 선점. 추가로 `booking_customer_no_overlap` GiST `EXCLUDE` 제약(`btree_gist`, `tsrange(slotStartAt,slotEndAt)`, ACTIVE 부분)으로 **한 고객의 시간대 중복 예약**(다른 상담사라도 겹치는 시간)을 DB 레벨에서 차단 → catch 23P01 → 409 (ADR 0015).
 - **예약 생명주기**: `PENDING`(고객 생성) → `CONFIRMED`(상담사 확정) → `COMPLETED`/`CANCELLED`.
 - **가용성**: 파생값. `isOpen AND 미래 AND ACTIVE 없음 AND 업무시간[9,18)`. 이중 진실원 없음.
 - **TestResult 기반 subject**: 예약 시 `testResultId` 지정 → 서버가 `subjectType/subjectId` 파생. 클라이언트 오지정 방지.
@@ -195,16 +197,19 @@ cd backend
 pnpm exec jest --config ./test/jest-e2e.json --runInBand
 ```
 
+백엔드는 NestJS + supertest 통합 테스트 스위트로 골든패스·동시성·RBAC/소유권·no-show 루프·운영 퍼널 Analytics·슬롯 CRUD·BioCom 챌린지/지표·상담 준비 자동화(AC-P1~P7)를 커버합니다. 프론트엔드는 vitest 단위 스위트로 세션 JWT 서명 검증(`shared/auth/verify.test.ts`)·라우트 접근 정책(`shared/auth/access.test.ts`)·상담사 콘솔 일정 필터·그룹핑 순수 함수(`shared/lib/date`·`views/schedule/lib/filter`·`views/availability/lib/grouping`)를 커버합니다. **어떤 assertion도 전체 스위트 개수를 하드코딩하지 않으며**(green/red로 회귀 판정), README도 이 원칙대로 테스트 파일·케이스 수를 고정 수치로 명시하지 않습니다 — 정확한 수는 `pnpm test`(프론트) / 아래 jest 명령(백엔드) 실행 결과가 단일 진실원입니다.
 
 | 파일                               | 검증 항목                                                                                                                                   | 핵심 AC                              |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
 | `booking.concurrency.spec.ts`      | 동일 슬롯 20개 동시 예약 → **정확히 1건 201 / 19건 409**, DB ACTIVE count=1                                                                 | AC2                                  |
+| `booking.self-overlap.spec.ts`     | 한 고객 시간대 중복 차단(GiST EXCLUDE): 동일시각·다른상담사 409, 부분겹침 409, 취소후 재예약 201, 인접 둘 다 201, 동시 자기중복 → 1×201/1×409 | AC2b                                 |
 | `rbac.spec.ts`                     | 역할 거부(고객→admin 403, 미인증 401) + 소유권 거부(타인 TestResult 403, 비담당 기록 403)                                                   | AC7, AC7b                            |
 | `golden-path.e2e-spec.ts`          | 예약→확정→기록(+챌린지 등록)→집계 흐름 + 지표별 전환(AC9) + 상태 배지 가시성 + 챌린지 등록/전환 셀 + 만석 시 가용 캘린더 대안(AC10)         | AC1, AC4, AC6, AC9, AC10, AC-C, AC-M |
 | `booking-redesign.spec.ts`         | PENDING-first 생명주기, confirm 엔드포인트                                                                                                  | AC1, AC3                             |
 | `family.spec.ts`                   | 대칭형 `FamilyLink` 초대 코드 생성/수락/철회, ACCEPTED 파트너 검사결과 접근                                                                 | FR9                                  |
 | `analytics.scope.spec.ts`          | scope=own/all 범위 분리, counselorId 필터                                                                                                   | AC11                                 |
 | `no-show-loop.spec.ts`             | `sweepNoShows` 자동 NO_SHOW 전이(상태 가드·멱등), 상담사/관리자 attendance override, NO_SHOW 단말성, **스케줄에 NO_SHOW 노출**(콘솔 가시성) | AC-N2, AC-N4, AC-N5, AC-N6           |
+| `analytics-ops.spec.ts`            | 운영 퍼널(booked/confirmed/completed/noShow/cancelled) + noShowRate·slotUtilization 집계                                                    | AC-A1                                |
 | `availability.crud.spec.ts`        | 슬롯 생성/수정/삭제(상담사 본인 + 관리자 전체), 겹침 가드, 활성 예약 삭제 가드                                                              | AC-S1, AC-S2, AC-S3, AC-S4, AC-S5    |
 | `availability.aggregation.spec.ts` | availability-calendar 시간대 집계(availableCount), 파생 가용성 규칙                                                                         | AC8                                  |
 
@@ -245,11 +250,13 @@ allosta/
 │   │   ├── analytics/              # 전환 집계, scope 토글, 운영 퍼널/지표, 챌린지 등록 수/전환율, briefOpenRate
 │   │   ├── test-result/            # seed + read-only, /my 엔드포인트 (BioCom 7종 + 참조범위/상태)
 │   │   ├── common/constants/       # SERVICE_TYPES 공유 상수 (BioCom 7종 코드)
+│   │   ├── ops-scheduler/          # @Interval 타이밍 래퍼 (sweepNoShows / sweepStalePending / sweepPendingUpgrades)
 │   │   ├── notification/           # 채널 어댑터, 스케줄러
 │   │   └── customer/
 │   ├── scripts/trigger-scheduler.ts
 │   └── test/
 │       ├── booking.concurrency.spec.ts
+│       ├── booking.self-overlap.spec.ts     # 고객 시간대 중복 방지(GiST EXCLUDE, ADR 0015)
 │       ├── booking-redesign.spec.ts
 │       ├── rbac.spec.ts
 │       ├── golden-path.e2e-spec.ts
@@ -297,3 +304,4 @@ allosta/
 | `add_challenge`                               | **BioCom step-3** — `ChallengeEnrollmentStatus` enum + `Challenge`(시드 카탈로그)·`ChallengeEnrollment`(4 FK 전부 cascade + `@@unique([recordId])`) 테이블 추가. 순수 additive(기존 테이블 `ALTER` 없음)로 기존 테스트 전량 무회귀(ADR 0007).                                                                                                                                                                                                       |
 | `structured_consultation_record`              | 상담 기록을 구조화 — `notes` 단일 필드를 `summary`/`recommendation`/`followUp` 3슬롯으로 분리하고 `ConsultationActionType` 체크리스트(`actions[]`) 추가. 상담사 간 기록 일관성 강제 + 상담행위별 전환 분석 가능.                                                                                                                                                                                                                                    |
 | `20260612120000_ai_pre_consultation_guidance` | **상담 전 AI 가이던스** — `Booking.concern String?`(고객 사전질문, write-only) + `Booking.briefOpenedAt DateTime?`(브리핑 최초 열람 시각) 추가. `ConsultationBriefGuidance`(`id, bookingId @unique, status BriefGuidanceStatus @default(FALLBACK), model String?, content, createdAt, updatedAt`) 신규 모델 + `BriefGuidanceStatus { FALLBACK UPGRADED }` enum + `Booking` 1:1 `onDelete: Cascade` 관계. 다가오는 상담 진행 안내를 예약 단위로 보관(사후 요약 아님). 순수 additive — 기존 테이블 ALTER 없음. |
+| `20260612140000_customer_no_overlap`          | **고객 시간대 중복 방지** — `btree_gist` 확장 + `Booking.slotStartAt/slotEndAt`(비정규화 슬롯 윈도우, 백필 후 NOT NULL) 추가 + GiST `EXCLUDE` 제약 `booking_customer_no_overlap`(`customerId WITH =`, `tsrange(slotStartAt,slotEndAt) WITH &&`, `WHERE status IN ('PENDING','CONFIRMED')`). 한 고객이 겹치는 시간대에 복수 활성 예약을 갖지 못하도록 DB 레벨 강제(ADR 0015). |

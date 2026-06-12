@@ -20,6 +20,13 @@ import { OwnershipService } from '../common/ownership/ownership.service';
 const DEFAULT_REMINDER_LEAD_MINUTES = 30;
 const MS_PER_MINUTE = 60_000;
 const UNIQUE_VIOLATION_CODE = 'P2002';
+// Postgres SQLSTATE for an exclusion_constraint violation (the GiST EXCLUDE
+// `booking_customer_no_overlap`, ADR 0015). Prisma does not have a dedicated
+// `code` for this — it surfaces as PrismaClientUnknownRequestError whose `message`
+// carries the raw SQLSTATE and constraint name (verified empirically, see ADR 0015).
+const EXCLUSION_VIOLATION_SQLSTATE = '23P01';
+const CUSTOMER_OVERLAP_CONSTRAINT = 'booking_customer_no_overlap';
+const CUSTOMER_OVERLAP_MESSAGE = '이미 같은 시간대에 예약이 있습니다.';
 
 /**
  * Shape returned by GET /bookings — the customer's own bookings with the
@@ -97,6 +104,26 @@ export class BookingService {
       throw new ConflictException('Slot is not open for booking');
     }
 
+    // Customer self-overlap pre-check (UX only — the real guarantee under
+    // concurrency is the `booking_customer_no_overlap` GiST EXCLUDE constraint,
+    // ADR 0015). Reject if this customer already holds an ACTIVE booking whose
+    // window overlaps [slot.startAt, slot.endAt). Overlap test on half-open
+    // ranges: existing.slotStartAt < newEnd AND existing.slotEndAt > newStart.
+    const overlapping = await this.prisma.booking.findFirst({
+      where: {
+        customerId,
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+        },
+        slotStartAt: { lt: slot.endAt },
+        slotEndAt: { gt: slot.startAt },
+      },
+      select: { id: true },
+    });
+    if (overlapping) {
+      throw new ConflictException(CUSTOMER_OVERLAP_MESSAGE);
+    }
+
     const reminderAt = new Date(
       slot.startAt.getTime() - this.reminderLeadMinutes() * MS_PER_MINUTE,
     );
@@ -111,6 +138,8 @@ export class BookingService {
             subjectId,
             testResultId,
             status: BookingStatus.PENDING,
+            slotStartAt: slot.startAt,
+            slotEndAt: slot.endAt,
             ...(concern !== undefined && { concern }),
           },
         });
@@ -144,11 +173,43 @@ export class BookingService {
       ) {
         throw new ConflictException('Slot is already booked');
       }
+      // The customer self-overlap GiST EXCLUDE constraint surfaces as a raw
+      // Postgres exclusion_violation (SQLSTATE 23P01). Prisma has no dedicated
+      // `code` for it: empirically it arrives as PrismaClientUnknownRequestError
+      // whose `message` contains both '23P01' and the constraint name. Match on
+      // either so the mapping is resilient to Prisma's exact error class.
+      if (this.isCustomerOverlapViolation(error)) {
+        throw new ConflictException(CUSTOMER_OVERLAP_MESSAGE);
+      }
       throw error;
     }
   }
 
   /**
+   * True when `error` is the Postgres exclusion_violation (23P01) raised by the
+   * `booking_customer_no_overlap` GiST constraint (ADR 0015). Inspects the raw
+   * message because Prisma surfaces 23P01 as an UnknownRequestError without a
+   * structured `code`.
+   */
+  private isCustomerOverlapViolation(error: unknown): boolean {
+    const message =
+      error instanceof Prisma.PrismaClientUnknownRequestError ||
+      error instanceof Prisma.PrismaClientKnownRequestError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : '';
+    return (
+      message.includes(EXCLUSION_VIOLATION_SQLSTATE) ||
+      message.includes(CUSTOMER_OVERLAP_CONSTRAINT)
+    );
+  }
+
+  /**
+   * Cancels a booking owned by the current customer (sets CANCELLED).
+   *
+   * Cancelling frees the slot: a CANCELLED booking leaves the
+   * `booking_slot_active_unique` partial index, so the slot becomes
    * derived-available again. There is no waitlist promotion.
    */
   async cancel(customerId: string, bookingId: string): Promise<Booking> {

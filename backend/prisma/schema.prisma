@@ -18,6 +18,20 @@
 //     ON "FamilyLink"("customerLowId","customerHighId") WHERE status = 'ACCEPTED';
 // PENDING rows have a null inviteeCustomerId so pair normalization is deferred
 // to accept time. Accept uses UPDATE+catch-P2002 (see family.service.ts).
+//
+// CUSTOMER SELF-OVERLAP (ADR 0015): the partial unique index above only stops two
+// bookings on the SAME slotId — it does NOT stop one customer from holding two
+// ACTIVE bookings on DIFFERENT slots (different counselors) at the same/overlapping
+// time. A person cannot attend two consultations at once. Because slot durations
+// vary (30/60min), this is enforced as a time-RANGE overlap via a Postgres GiST
+// EXCLUDE constraint (btree_gist), partial on the ACTIVE set, created in raw SQL
+// (Prisma cannot express exclusion constraints) in migration
+// `customer_no_overlap`:
+//   ALTER TABLE "Booking" ADD CONSTRAINT "booking_customer_no_overlap"
+//     EXCLUDE USING gist ("customerId" WITH =, tstzrange("slotStartAt","slotEndAt") WITH &&)
+//     WHERE ("status" IN ('PENDING','CONFIRMED'));
+// Booking.slotStartAt/slotEndAt below are the denormalized slot window the
+// constraint ranges over.
 
 generator client {
   provider = "prisma-client-js"
@@ -156,11 +170,22 @@ model Booking {
   // (brief-open-rate numerator, AC-P7). Set once via a conditional updateMany
   // (briefOpenedAt: null guard) so concurrent opens stay DB-idempotent.
   briefOpenedAt DateTime?
+  // Denormalized copy of the booked slot's [startAt, endAt) window. The slot time
+  // lives on AvailabilitySlot, but the `booking_customer_no_overlap` GiST EXCLUDE
+  // constraint (ADR 0015) must range over a single Booking row, so it is mirrored
+  // here. Write-once at create() — bookings never reschedule their slot. If a
+  // reschedule feature is ever added it MUST update these columns to keep them in
+  // sync with the source slot.
+  slotStartAt  DateTime
+  slotEndAt    DateTime
   createdAt    DateTime      @default(now())
 
   // NOTE: the partial unique index on (slotId) WHERE status IN ('PENDING','CONFIRMED')
   // is added via raw SQL migration (see header comment) — it is what enforces
   // AC15/AC2 (at most one ACTIVE booking per slot, covering PENDING preemption).
+  // A second raw-SQL constraint, booking_customer_no_overlap (GiST EXCLUDE over
+  // customerId + tstzrange(slotStartAt, slotEndAt), partial on ACTIVE), enforces
+  // that one customer cannot hold two overlapping ACTIVE bookings (ADR 0015).
 
   slot          AvailabilitySlot    @relation(fields: [slotId], references: [id], onDelete: Cascade)
   customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)

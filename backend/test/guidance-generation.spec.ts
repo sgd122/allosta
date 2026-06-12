@@ -80,6 +80,8 @@ describe('Pre-consultation guidance generation (ADR 0014)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: island.customerId,
         status: BookingStatus.CONFIRMED,
+        slotStartAt: slot.startAt,
+        slotEndAt: slot.endAt,
         ...(concern !== undefined && { concern }),
       },
     });

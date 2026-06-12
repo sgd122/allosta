@@ -215,6 +215,8 @@ describe('Availability slot CRUD (AC-S1–S5)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: seeded.customerId,
         status: BookingStatus.PENDING,
+        slotStartAt: slot.startAt,
+        slotEndAt: slot.endAt,
       },
     });
     trackedBookingIds.add(booking.id);
