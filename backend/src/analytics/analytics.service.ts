@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { BookingStatus, Outcome, Prisma, WaitlistStatus } from '@prisma/client';
+import {
+  BookingStatus,
+  Outcome,
+  Prisma,
+  WaitlistStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AnalyticsDashboard,
@@ -27,6 +32,7 @@ export class AnalyticsService {
       waitlistConversionRate,
       challengeEnrollments,
       challengeConversionRate,
+      briefOpenRate,
     ] = await Promise.all([
       this.countTotalRecords(counselorId),
       this.groupByOutcome(counselorId),
@@ -37,6 +43,7 @@ export class AnalyticsService {
       this.computeWaitlistConversion(counselorId),
       this.countChallengeEnrollments(counselorId),
       this.computeChallengeConversion(counselorId),
+      this.computeBriefOpenRate(counselorId),
     ]);
 
     const outcomeDistribution = this.buildOutcomeDistribution(outcomeGroups);
@@ -60,6 +67,7 @@ export class AnalyticsService {
       waitlistConversionRate,
       challengeEnrollments,
       challengeConversionRate,
+      briefOpenRate,
     };
   }
 
@@ -374,5 +382,47 @@ export class AnalyticsService {
     const purchased = Number(rows[0]?.purchasedRecords ?? 0);
     const enrolled = Number(rows[0]?.enrolledPurchased ?? 0);
     return purchased > 0 ? enrolled / purchased : null;
+  }
+
+  /**
+   * Brief open-rate headline metric (AC-P7).
+   *   numerator   = bookings with briefOpenedAt != null
+   *   denominator = bookings with status IN (CONFIRMED, COMPLETED, NO_SHOW)
+   *
+   * The denominator uses this fixed three-status set because createRecord
+   * transitions CONFIRMED → COMPLETED; using CONFIRMED alone would cause the
+   * denominator to drift downward as sessions are completed, producing an
+   * inflated rate. PENDING and CANCELLED are excluded as they never produce a
+   * brief-open event. Mirror: noShowRate = NO_SHOW/(COMPLETED+NO_SHOW) pattern.
+   *
+   * Scope: slot.counselorId relation filter (own/all toggle), mirroring
+   * groupBookingFunnel.
+   */
+  private async computeBriefOpenRate(counselorId?: string): Promise<number> {
+    const scopeWhere = counselorId ? { slot: { counselorId } } : undefined;
+
+    const denominatorStatuses = [
+      BookingStatus.CONFIRMED,
+      BookingStatus.COMPLETED,
+      BookingStatus.NO_SHOW,
+    ];
+
+    const [denominator, numerator] = await Promise.all([
+      this.prisma.booking.count({
+        where: {
+          ...scopeWhere,
+          status: { in: denominatorStatuses },
+        },
+      }),
+      this.prisma.booking.count({
+        where: {
+          ...scopeWhere,
+          status: { in: denominatorStatuses },
+          briefOpenedAt: { not: null },
+        },
+      }),
+    ]);
+
+    return denominator > 0 ? numerator / denominator : 0;
   }
 }

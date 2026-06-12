@@ -62,6 +62,7 @@ export class BookingService {
     customerId: string,
     slotId: string,
     testResultId: string,
+    concern?: string,
   ): Promise<Booking> {
     const testResult = await this.prisma.testResult.findUnique({
       where: { id: testResultId },
@@ -107,6 +108,7 @@ export class BookingService {
             subjectId,
             testResultId,
             status: BookingStatus.PENDING,
+            ...(concern !== undefined && { concern }),
           },
         });
 

@@ -64,6 +64,14 @@ export interface AnalyticsDashboard {
    * but none produced an enrollment. Distinguishes "no data" from "no conversion".
    */
   challengeConversionRate: number | null;
+  /**
+   * Fraction of bookings (in CONFIRMED | COMPLETED | NO_SHOW) whose
+   * briefOpenedAt is non-null (AC-P7). The denominator uses this fixed set
+   * because createRecord transitions CONFIRMED → COMPLETED; a CONFIRMED-only
+   * denominator would drift downward as records are created. Zero when
+   * denominator is zero.
+   */
+  briefOpenRate: number;
 }
 
 export interface AnalyticsRecordRow {

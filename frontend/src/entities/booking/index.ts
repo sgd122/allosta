@@ -1,4 +1,4 @@
-export type { Slot, Booking, AggregatedSlot, CalendarDay, MyBooking } from './types';
+export type { Slot, Booking, CreateBookingInput, AggregatedSlot, CalendarDay, MyBooking } from './types';
 export {
   getSlots,
   createBooking,

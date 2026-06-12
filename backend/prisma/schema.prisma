@@ -159,6 +159,14 @@ model Booking {
   // subject (subjectType/subjectId) is derived from this result's owner.
   testResultId String?
   status       BookingStatus @default(PENDING)
+  // Optional customer pre-question (사전질문). Surfaced write-only into the
+  // counselor brief (consultation prep, ADR 0014) — never read back to the
+  // customer. Length-bounded at the DTO layer (@MaxLength).
+  concern      String?
+  // First time the assigned counselor opened the pre-consultation brief
+  // (brief-open-rate numerator, AC-P7). Set once via a conditional updateMany
+  // (briefOpenedAt: null guard) so concurrent opens stay DB-idempotent.
+  briefOpenedAt DateTime?
   createdAt    DateTime      @default(now())
 
   // NOTE: the partial unique index on (slotId) WHERE status IN ('PENDING','CONFIRMED')
@@ -170,6 +178,10 @@ model Booking {
   testResult    TestResult?         @relation(fields: [testResultId], references: [id], onDelete: SetNull)
   record        ConsultationRecord?
   notifications Notification[]
+  // Pre-consultation AI guidance (ADR 0014). Advises the counselor how to
+  // conduct the UPCOMING consultation, keyed by bookingId @unique. Distinct from
+  // any post-consultation artifact — generated/refreshed lazily on brief open.
+  aiGuidance    ConsultationBriefGuidance?
 
   @@index([slotId])
   @@index([customerId])
@@ -194,6 +206,34 @@ model ConsultationRecord {
   enrollments ChallengeEnrollment[]
 
   @@index([counselorId])
+}
+
+// Pre-consultation AI guidance (ADR 0014). Advises the counselor how to conduct
+// the UPCOMING consultation, derived from the subject's test indicators + prior
+// consultation records + the customer's concern. Keyed by bookingId @unique.
+//
+// Generated lazily on brief open: the deterministic template FALLBACK is upserted
+// the first time the counselor opens the brief (never overwriting an existing
+// UPGRADED row). The OpsScheduler @Interval sweep upgrades FALLBACK rows to
+// UPGRADED when local Ollama (gemma) is detected. The row's absence means
+// "not yet generated" without a sentinel; `status` drives the lifecycle.
+// Reproducibility: the template FALLBACK keeps the golden path Ollama-independent.
+enum BriefGuidanceStatus {
+  FALLBACK
+  UPGRADED
+}
+
+model ConsultationBriefGuidance {
+  id        String              @id @default(cuid())
+  bookingId String              @unique
+  status    BriefGuidanceStatus @default(FALLBACK)
+  // The gemma model name when UPGRADED; null on FALLBACK.
+  model     String?
+  content   String
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 }
 
 model Product {

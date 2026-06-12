@@ -12,6 +12,7 @@ import {
   RadioCards,
   Spinner,
   Text,
+  TextArea,
 } from '@radix-ui/themes';
 import { Cross2Icon, ExclamationTriangleIcon, InfoCircledIcon } from '@radix-ui/react-icons';
 import { createBooking, invalidateAfterBookingCreated } from '@/entities/booking';
@@ -31,7 +32,10 @@ import type { CompleteBookingDialogProps } from '../types';
 export function CompleteBookingDialog({ intent, onClose, onCompleted }: CompleteBookingDialogProps) {
   const queryClient = useQueryClient();
   const [selectedReportKey, setSelectedReportKey] = useState<string | null>(null);
+  const [concern, setConcern] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const CONCERN_MAX = 1000;
 
   const testResultsQuery = useTestResults();
   const familyQuery = useFamilyMembers();
@@ -44,12 +48,13 @@ export function CompleteBookingDialog({ intent, onClose, onCompleted }: Complete
   const mutation = useMutation({
     mutationFn: ({ report }: { report: TestReport }) => {
       if (!intent) throw new Error('예약할 슬롯을 찾지 못했습니다.');
-      return createBooking(bookingInputForReport(intent, report));
+      return createBooking(bookingInputForReport(intent, report, concern));
     },
     onSuccess: async () => {
       if (!intent) return;
       await invalidateAfterBookingCreated(queryClient, { source: intent.source });
       setSelectedReportKey(null);
+      setConcern('');
       setSubmitError(null);
       onCompleted?.();
     },
@@ -58,6 +63,7 @@ export function CompleteBookingDialog({ intent, onClose, onCompleted }: Complete
 
   useEffect(() => {
     setSelectedReportKey(null);
+    setConcern('');
     setSubmitError(null);
     mutation.reset();
     // Reset all dialog-local state whenever a different slot intent is opened.
@@ -140,6 +146,28 @@ export function CompleteBookingDialog({ intent, onClose, onCompleted }: Complete
               </RadioCards.Item>
             ))}
           </RadioCards.Root>
+        )}
+
+        {!testResultsQuery.isLoading && hasResults && (
+          <Box mt="4">
+            <Flex align="center" justify="between" gap="2" mb="1.5" wrap="wrap">
+              <Eyebrow tone="gray">사전 질문 (선택)</Eyebrow>
+              <Text size="1" color="gray" className="tabular-nums">
+                {concern.length}/{CONCERN_MAX}
+              </Text>
+            </Flex>
+            <TextArea
+              rows={3}
+              maxLength={CONCERN_MAX}
+              placeholder="상담사에게 미리 전하고 싶은 궁금한 점이 있다면 적어주세요. (선택)"
+              value={concern}
+              onChange={(e) => setConcern(e.target.value)}
+              aria-label="상담 사전 질문 (선택)"
+            />
+            <Text size="1" color="gray" mt="1" as="p">
+              입력한 내용은 담당 상담사의 사전 브리핑에만 표시됩니다.
+            </Text>
+          </Box>
         )}
 
         {submitError && (

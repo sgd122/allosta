@@ -26,6 +26,11 @@ export interface Analytics {
   waitlistConversionRate: number;
   challengeEnrollments: number;
   challengeConversionRate: number | null;
+  /**
+   * Fraction of bookings (CONFIRMED | COMPLETED | NO_SHOW) whose pre-consultation
+   * brief was opened by the counselor (AC-P7). Zero when the denominator is zero.
+   */
+  briefOpenRate: number;
 }
 
 export interface RecordListItem {

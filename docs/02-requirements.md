@@ -14,77 +14,77 @@
 > Must=골든패스 코어(없으면 제품 성립 불가) · Should=운영 완성도(MVP 내 핵심 페인 해소) · Could=차별화 부가가치.
 > Won't(이번 범위 외)의 상세 근거는 [01-problem-definition](./01-problem-definition.md) Non-Goals와 [03-mvp-scope](./03-mvp-scope.md) 참조.
 
-| 우선순위 | 요구사항 | 근거 |
-|---------|---------|------|
-| **Must** | FR1 예약·동시성 · FR2 상담대상 파생 · FR3 구조화 상담기록 · FR4 전환 Analytics · FR7 RBAC·소유권 · FR8 검사결과 조회 | 검사결과→예약→상담→전환 **골든패스의 코어**. 하나라도 빠지면 플랫폼이 성립하지 않음 |
-| **Should** | FR5 알림(시뮬) · FR6 Waitlist · FR9 가족 연결 · FR10 No-show 자동처리 · FR11 운영 퍼널 Analytics · FR12 Availability CRUD | 문제 정의의 **운영 페인(예약 누락·노쇼·공석 이탈·가족 상담)** 을 직접 해소하는 MVP 운영 완성도 |
-| **Could** | FR13 관리 프로그램(챌린지) 카탈로그·등록 | BioCom step-3 **차별화 부가가치**. 비파괴적(additive) 추가로 코어 회귀 없음 |
-| **Won't (now)** | Waitlist soft-hold 선점 · 실 SMS/Email 발송 · 업로드·파싱 파이프라인 구현 | 인터페이스 경계로만 표현(ADR 0004·0006). Phase 2 |
+| 우선순위        | 요구사항                                                                                                                  | 근거                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Must**        | FR1 예약·동시성 · FR2 상담대상 파생 · FR3 구조화 상담기록 · FR4 전환 Analytics · FR7 RBAC·소유권 · FR8 검사결과 조회      | 검사결과→예약→상담→전환 **골든패스의 코어**. 하나라도 빠지면 플랫폼이 성립하지 않음            |
+| **Should**      | FR5 알림(시뮬) · FR6 Waitlist · FR9 가족 연결 · FR10 No-show 자동처리 · FR11 운영 퍼널 Analytics · FR12 Availability CRUD | 문제 정의의 **운영 페인(예약 누락·노쇼·공석 이탈·가족 상담)** 을 직접 해소하는 MVP 운영 완성도 |
+| **Could**       | FR13 관리 프로그램(챌린지) 카탈로그·등록                                                                                  | BioCom step-3 **차별화 부가가치**. 비파괴적(additive) 추가로 코어 회귀 없음                    |
+| **Won't (now)** | Waitlist soft-hold 선점 · 실 SMS/Email 발송 · 업로드·파싱 파이프라인 구현                                                 | 인터페이스 경계로만 표현(ADR 0004·0006). Phase 2                                               |
 
 > 비기능 요구사항(NFR1 재현성 · NFR2 동시성 정확성 · NFR3 보안/권한)은 전부 **Must**다 — 평가 재현성과 정확성의 전제이기 때문이다.
 
 ### FR1 — 예약 및 동시성 (Booking & Concurrency)
 
-| ID | 요구사항 |
-|----|---------|
-| FR1-1 | 고객은 로그인 후 가용 슬롯(`AvailabilitySlot`) 통합 캘린더(`GET /counselors/availability-calendar`)를 조회할 수 있다. 동일 시간대에 여러 상담사가 가용한 경우 하나의 엔트리로 집계되며 `availableCount`로 표현된다. |
-| FR1-2 | 고객은 가용 슬롯과 검사결과(`testResultId`)를 함께 지정해 예약(`Booking`)을 생성한다. 생성 즉시 `status=PENDING`으로 설정된다. 상담 대상(`subjectType/subjectId`)은 지정한 TestResult의 소유자에서 서버 측에서 파생되며, 직접 입력하지 않는다. |
-| FR1-3 | 상담사는 본인 슬롯에 대한 PENDING 예약을 확정(`PATCH /bookings/:id/confirm`)해 `status=CONFIRMED`로 전환할 수 있다. PENDING 상태의 예약만 확정 가능하다. |
-| FR1-4 | 동일 슬롯에 대한 동시 예약 요청이 중복되지 않는다. DB 부분 unique 인덱스(`booking_slot_active_unique`, `WHERE status IN ('PENDING','CONFIRMED')`) + insert-first 패턴으로 원자성을 보장하며, 선점 외 요청은 `409 CONFLICT`를 반환한다. |
-| FR1-5 | 고객은 본인의 PENDING 또는 CONFIRMED 예약을 취소할 수 있다(`status=CANCELLED`). 취소된 슬롯은 즉시 가용 목록에 재노출된다. |
-| FR1-6 | 가용 슬롯 조회는 파생값 기준으로 동작한다: `AvailabilitySlot.isOpen = true` AND 해당 슬롯에 `status IN (PENDING, CONFIRMED)`인 `Booking`이 없는 슬롯만 가용으로 반환한다. |
+| ID    | 요구사항                                                                                                                                                                                                                                                                              |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR1-1 | 고객은 로그인 후 가용 슬롯(`AvailabilitySlot`) 통합 캘린더(`GET /counselors/availability-calendar`)를 조회할 수 있다. 동일 시간대에 여러 상담사가 가용한 경우 하나의 엔트리로 집계되며 `availableCount`로 표현된다.                                                                   |
+| FR1-2 | 고객은 가용 슬롯과 검사결과(`testResultId`)를 함께 지정해 예약(`Booking`)을 생성한다. 생성 즉시 `status=PENDING`으로 설정된다. 상담 대상(`subjectType/subjectId`)은 지정한 TestResult의 소유자에서 서버 측에서 파생되며, 직접 입력하지 않는다.                                        |
+| FR1-3 | 상담사는 본인 슬롯에 대한 PENDING 예약을 확정(`PATCH /bookings/:id/confirm`)해 `status=CONFIRMED`로 전환할 수 있다. PENDING 상태의 예약만 확정 가능하다.                                                                                                                              |
+| FR1-4 | 동일 슬롯에 대한 동시 예약 요청이 중복되지 않는다. DB 부분 unique 인덱스(`booking_slot_active_unique`, `WHERE status IN ('PENDING','CONFIRMED')`) + insert-first 패턴으로 원자성을 보장하며, 선점 외 요청은 `409 CONFLICT`를 반환한다.                                                |
+| FR1-5 | 고객은 본인의 PENDING 또는 CONFIRMED 예약을 취소할 수 있다(`status=CANCELLED`). 취소된 슬롯은 즉시 가용 목록에 재노출된다.                                                                                                                                                            |
+| FR1-6 | 가용 슬롯 조회는 파생값 기준으로 동작한다: `AvailabilitySlot.isOpen = true` AND 해당 슬롯에 `status IN (PENDING, CONFIRMED)`인 `Booking`이 없는 슬롯만 가용으로 반환한다.                                                                                                             |
 | FR1-7 | 통합 캘린더(`GET /counselors/availability-calendar`)는 동일 시작/종료 시간을 가진 여러 상담사의 슬롯을 하나의 엔트리로 집계하고, `availableCount`(가용 상담사 수)를 제공한다. 업무 시간(09:00–18:00)만 포함하며, 시드는 2026년 6월–8월, 월–금, 09:00–18:00 매 시간 그리드를 생성한다. |
 
 ### FR2 — 상담 대상 파생 (Subject Derivation — CUSTOMER-only)
 
-| ID | 요구사항 |
-|----|---------|
-| FR2-1 | 예약의 상담 대상(`subjectType / subjectId`)은 `testResultId`로부터 서버 측에서 자동 파생된다. 요청자가 직접 지정하는 것을 허용하지 않아 잘못된 지정을 방지한다. |
-| FR2-2 | `subjectType=CUSTOMER`이면 예약자 본인(`Customer`)이 상담 대상이다. |
+| ID    | 요구사항                                                                                                                                                                                                                                                                   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR2-1 | 예약의 상담 대상(`subjectType / subjectId`)은 `testResultId`로부터 서버 측에서 자동 파생된다. 요청자가 직접 지정하는 것을 허용하지 않아 잘못된 지정을 방지한다.                                                                                                            |
+| FR2-2 | `subjectType=CUSTOMER`이면 예약자 본인(`Customer`)이 상담 대상이다.                                                                                                                                                                                                        |
 | FR2-3 | 예약 subject는 **항상 `subjectType=CUSTOMER`**다. `subjectId`는 예약된 TestResult를 소유한 고객(본인 또는 `ACCEPTED` `FamilyLink`로 연결된 가족 파트너)을 가리킨다. 본인도, `ACCEPTED` 파트너도 아닌 고객의 TestResult를 지정하면 `403 FORBIDDEN`을 반환한다(소유권 검증). |
-| FR2-4 | 가족 관계는 대칭형 `FamilyLink`(Customer↔Customer)로 모델링된다(`id, inviterCustomerId, inviteeCustomerId, status, code, expiresAt, 관계 라벨`). 별도의 `FamilyMember` 1급 엔티티는 두지 않는다 — 가족 구성원도 자체 `Customer` 계정을 보유한다. |
-| FR2-5 | `TestResult` 엔티티도 `subjectType=CUSTOMER` + `subjectId`(소유 고객)로 소유 주체를 표현한다. 가족 검사결과 접근은 `ACCEPTED` `FamilyLink`를 통해 파생된다. |
+| FR2-4 | 가족 관계는 대칭형 `FamilyLink`(Customer↔Customer)로 모델링된다(`id, inviterCustomerId, inviteeCustomerId, status, code, expiresAt, 관계 라벨`). 별도의 `FamilyMember` 1급 엔티티는 두지 않는다 — 가족 구성원도 자체 `Customer` 계정을 보유한다.                           |
+| FR2-5 | `TestResult` 엔티티도 `subjectType=CUSTOMER` + `subjectId`(소유 고객)로 소유 주체를 표현한다. 가족 검사결과 접근은 `ACCEPTED` `FamilyLink`를 통해 파생된다.                                                                                                                |
 
 ### FR3 — 구조화 상담 기록 (Structured Consultation Record)
 
-| ID | 요구사항 |
-|----|---------|
-| FR3-1 | 상담사는 본인이 담당한 예약에 한해 상담 기록(`ConsultationRecord`)을 생성할 수 있다. 다른 상담사의 예약에 기록을 작성하려 하면 `403 FORBIDDEN`을 반환한다(소유권 검증). |
-| FR3-2 | 상담 기록에는 `summary`(주요 상담 내용 — 필수), `recommendation`(권고 사항 — 필수), `followUp`(후속 조치 — 선택), `interestedProducts[]`(관심 상품 다중 선택), `outcome ∈ {EXPLAINED, GUIDED, PURCHASED}`, `actions[] ∈ ConsultationActionType{METRIC_EXPLAINED, DIET_GUIDANCE, SUPPLEMENT_GUIDANCE, RETEST_GUIDANCE, LIFESTYLE_GUIDANCE}`(상담행위 체크리스트)를 포함한다. |
-| FR3-2b | `summary`·`recommendation`는 필수 입력으로 빈값을 거부한다(서버 `@IsNotEmpty` + 프론트 폼 저장 차단). 자유 텍스트 단일 `notes` 대신 고정 슬롯(summary/recommendation/followUp)과 `actions[]` 체크리스트로 기록 형태를 강제해 상담사 간 기록 일관성을 보장한다 — `outcome` enum이 결과를 일관되게 만드는 것과 동일한 메커니즘이다. |
-| FR3-3 | 하나의 예약(`Booking`)에는 상담 기록이 최대 1건만 연결된다(`ConsultationRecord.bookingId unique`). |
-| FR3-4 | 상담사는 기록 생성 시 `metricRefs[]`로 해당 상담에서 논의한 검사 지표를 선택해 연결할 수 있다(`ConsultationRecordMetric: recordId, testResultId, metricKey`). |
+| ID     | 요구사항                                                                                                                                                                                                                                                                                                                                                                    |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR3-1  | 상담사는 본인이 담당한 예약에 한해 상담 기록(`ConsultationRecord`)을 생성할 수 있다. 다른 상담사의 예약에 기록을 작성하려 하면 `403 FORBIDDEN`을 반환한다(소유권 검증).                                                                                                                                                                                                     |
+| FR3-2  | 상담 기록에는 `summary`(주요 상담 내용 — 필수), `recommendation`(권고 사항 — 필수), `followUp`(후속 조치 — 선택), `interestedProducts[]`(관심 상품 다중 선택), `outcome ∈ {EXPLAINED, GUIDED, PURCHASED}`, `actions[] ∈ ConsultationActionType{METRIC_EXPLAINED, DIET_GUIDANCE, SUPPLEMENT_GUIDANCE, RETEST_GUIDANCE, LIFESTYLE_GUIDANCE}`(상담행위 체크리스트)를 포함한다. |
+| FR3-2b | `summary`·`recommendation`는 필수 입력으로 빈값을 거부한다(서버 `@IsNotEmpty` + 프론트 폼 저장 차단). 자유 텍스트 단일 `notes` 대신 고정 슬롯(summary/recommendation/followUp)과 `actions[]` 체크리스트로 기록 형태를 강제해 상담사 간 기록 일관성을 보장한다 — `outcome` enum이 결과를 일관되게 만드는 것과 동일한 메커니즘이다.                                           |
+| FR3-3  | 하나의 예약(`Booking`)에는 상담 기록이 최대 1건만 연결된다(`ConsultationRecord.bookingId unique`).                                                                                                                                                                                                                                                                          |
+| FR3-4  | 상담사는 기록 생성 시 `metricRefs[]`로 해당 상담에서 논의한 검사 지표를 선택해 연결할 수 있다(`ConsultationRecordMetric: recordId, testResultId, metricKey`).                                                                                                                                                                                                               |
 
 ### FR4 — Analytics 및 지표별 전환 집계
 
-| ID | 요구사항 |
-|----|---------|
-| FR4-1 | 관리자는 `GET /admin/analytics` 엔드포인트로 상담 전환율(`PURCHASED` / 전체 기록 수), outcome 분포, 상품별 관심 카운트를 실시간 집계해 조회할 수 있다. |
-| FR4-2 | 상담사는 `GET /admin/analytics?scope=own`(기본)으로 본인 담당 예약만 집계, `scope=all`로 전체 집계를 볼 수 있다. 관리자는 `?counselorId=<id>` 파라미터로 특정 상담사 집계를 조회할 수 있다. |
-| FR4-3 | Analytics는 `ConsultationRecordMetric`을 조인해 "특정 검사 지표를 논의한 상담"의 전환율을 지표별로 집계한다. 이를 통해 어떤 검사 결과가 전환에 기여했는지 파악할 수 있다. |
-| FR4-4 | 집계는 사전 계산 없이 쿼리 시점 실시간 집계로 동작한다(평가 기간 데이터 규모 기준). |
+| ID    | 요구사항                                                                                                                                                                                                                                                                                                                                                              |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR4-1 | 관리자는 `GET /admin/analytics` 엔드포인트로 상담 전환율(`PURCHASED` / 전체 기록 수), outcome 분포, 상품별 관심 카운트를 실시간 집계해 조회할 수 있다.                                                                                                                                                                                                                |
+| FR4-2 | 상담사는 `GET /admin/analytics?scope=own`(기본)으로 본인 담당 예약만 집계, `scope=all`로 전체 집계를 볼 수 있다. 관리자는 `?counselorId=<id>` 파라미터로 특정 상담사 집계를 조회할 수 있다.                                                                                                                                                                           |
+| FR4-3 | Analytics는 `ConsultationRecordMetric`을 조인해 "특정 검사 지표를 논의한 상담"의 전환율을 지표별로 집계한다. 이를 통해 어떤 검사 결과가 전환에 기여했는지 파악할 수 있다.                                                                                                                                                                                             |
+| FR4-4 | 집계는 사전 계산 없이 쿼리 시점 실시간 집계로 동작한다(평가 기간 데이터 규모 기준).                                                                                                                                                                                                                                                                                   |
 | FR4-5 | `GET /admin/analytics`는 관리 프로그램(챌린지) 운영 지표로 `challengeEnrollments`(등록 수)와 `challengeConversionRate`(구매 → 챌린지 등록 전환율)를 추가로 반환한다(FR13 참조). 두 지표 모두 기존 `scope=own\|all` + `counselorId` 필터를 준수하며, 범위 산정은 **`ChallengeEnrollment`가 연결된 `ConsultationRecord`의 `counselorId`**(record JOIN)를 기준으로 한다. |
 
 ### FR5 — 알림 (Notification — 시뮬레이션)
 
-| ID | 요구사항 |
-|----|---------|
-| FR5-1 | 예약 생성 시 `type=CONFIRMATION` Notification이 즉시 생성된다(`status=PENDING → SENT`). |
-| FR5-2 | 예약 시각 전 `type=REMINDER` Notification이 스케줄 잡(`@nestjs/schedule`)으로 생성되고, 잡 실행 시 `status PENDING → SENT`로 전이된다. |
-| FR5-3 | Waitlist 공석 발생 시 `type=SLOT_OPENED` Notification이 생성된다(FR6 참조). |
+| ID    | 요구사항                                                                                                                                                                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR5-1 | 예약 생성 시 `type=CONFIRMATION` Notification이 즉시 생성된다(`status=PENDING → SENT`).                                                                                                                                                                 |
+| FR5-2 | 예약 시각 전 `type=REMINDER` Notification이 스케줄 잡(`@nestjs/schedule`)으로 생성되고, 잡 실행 시 `status PENDING → SENT`로 전이된다.                                                                                                                  |
+| FR5-3 | Waitlist 공석 발생 시 `type=SLOT_OPENED` Notification이 생성된다(FR6 참조).                                                                                                                                                                             |
 | FR5-4 | 알림 채널은 `CONSOLE / IN_APP / EMAIL / SMS`이며, `CONSOLE`과 `IN_APP`은 실동작, `EMAIL`과 `SMS`는 어댑터 stub(`NotificationChannel` 인터페이스 구현체)으로 제공된다. 실제 외부 발송은 어댑터 교체로 확장 가능하도록 설계 경계를 인터페이스로 명시한다. |
-| FR5-5 | Notification 엔티티는 `scheduledAt`, `sentAt`을 포함해 발송 상태를 추적한다. |
+| FR5-5 | Notification 엔티티는 `scheduledAt`, `sentAt`을 포함해 발송 상태를 추적한다.                                                                                                                                                                            |
 
 ### FR6 — Waitlist (대기열, 공석 알림, 전환 추적)
 
-| ID | 요구사항 |
-|----|---------|
-| FR6-1 | 고객은 원하는 상담사의 가용 슬롯이 없을 때 `POST /waitlist`로 대기열에 등록할 수 있다(`status=WAITING`). |
+| ID    | 요구사항                                                                                                                                                                                                                                                      |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR6-1 | 고객은 원하는 상담사의 가용 슬롯이 없을 때 `POST /waitlist`로 대기열에 등록할 수 있다(`status=WAITING`).                                                                                                                                                      |
 | FR6-2 | 해당 상담사의 PENDING 또는 CONFIRMED 예약이 취소되면, 시스템은 같은 상담사를 기다리는 `WAITING` 항목 중 가장 먼저 등록된 1건을 FIFO로 `NOTIFIED`로 전이시키고 `SLOT_OPENED` Notification을 생성한다. 이 처리는 예약 취소 트랜잭션 내에서 원자적으로 실행된다. |
-| FR6-3 | Waitlist 항목도 `subjectType / subjectId`를 포함해 대기 중 상담 대상을 기록한다. |
-| FR6-4 | Waitlist 상태 전이: `WAITING → NOTIFIED(+offeredSlotId, offerExpiresAt) → CONVERTED \| EXPIRED \| CANCELLED`. |
-| FR6-5 | `NOTIFIED` 항목이 `offerExpiresAt`을 지나도 예약으로 전환되지 않은 경우, 스케줄러(`sweepWaitlistOffers`)가 해당 항목을 `EXPIRED`로 전이시킨다. `CONVERTED`·`EXPIRED`는 단말 상태다. |
-| FR6-6 | Waitlist 오퍼는 **advisory(권고 전용)**이다. 슬롯을 선점하지 않으며, 예약 성공 여부는 `booking_slot_active_unique` 부분 unique 인덱스가 결정한다. `NOTIFIED` 대기자보다 일반 고객이 먼저 예약하면 대기자는 슬롯을 놓칠 수 있다. |
+| FR6-3 | Waitlist 항목도 `subjectType / subjectId`를 포함해 대기 중 상담 대상을 기록한다.                                                                                                                                                                              |
+| FR6-4 | Waitlist 상태 전이: `WAITING → NOTIFIED(+offeredSlotId, offerExpiresAt) → CONVERTED \| EXPIRED \| CANCELLED`.                                                                                                                                                 |
+| FR6-5 | `NOTIFIED` 항목이 `offerExpiresAt`을 지나도 예약으로 전환되지 않은 경우, 스케줄러(`sweepWaitlistOffers`)가 해당 항목을 `EXPIRED`로 전이시킨다. `CONVERTED`·`EXPIRED`는 단말 상태다.                                                                           |
+| FR6-6 | Waitlist 오퍼는 **advisory(권고 전용)**이다. 슬롯을 선점하지 않으며, 예약 성공 여부는 `booking_slot_active_unique` 부분 unique 인덱스가 결정한다. `NOTIFIED` 대기자보다 일반 고객이 먼저 예약하면 대기자는 슬롯을 놓칠 수 있다.                               |
 
 ### FR7 — RBAC 및 소유권 권한 (Two-Layer Authorization)
 
@@ -92,79 +92,91 @@
 
 **층 1 — 역할 기반 접근 제어 (RBAC Guard, 역할 층)**
 
-| ID | 요구사항 |
-|----|---------|
-| FR7-1 | 미인증 요청은 `401 UNAUTHORIZED`를 반환한다. |
-| FR7-2 | `CUSTOMER` 역할은 `/admin/*` 경로에 접근하면 `403 FORBIDDEN`을 반환한다. |
-| FR7-3 | `COUNSELOR` 역할은 다른 상담사의 일정·기록 경로에 접근하면 `403 FORBIDDEN`을 반환한다. |
+| ID    | 요구사항                                                                                     |
+| ----- | -------------------------------------------------------------------------------------------- |
+| FR7-1 | 미인증 요청은 `401 UNAUTHORIZED`를 반환한다.                                                 |
+| FR7-2 | `CUSTOMER` 역할은 `/admin/*` 경로에 접근하면 `403 FORBIDDEN`을 반환한다.                     |
+| FR7-3 | `COUNSELOR` 역할은 다른 상담사의 일정·기록 경로에 접근하면 `403 FORBIDDEN`을 반환한다.       |
 | FR7-4 | 역할 검증은 JWT `role` claim 기반 NestJS Guard(`RolesGuard`)로 컨트롤러 레이어에서 수행된다. |
 
 **층 2 — 자원 소유권 검증 (Service Layer, 소유권 층)**
 
-| ID | 요구사항 |
-|----|---------|
+| ID    | 요구사항                                                                                                                                                               |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR7-5 | 고객은 본인 또는 `ACCEPTED` `FamilyLink`로 연결된 가족 파트너가 소유한 TestResult만 예약에 사용할 수 있다. 연결되지 않은 고객의 TestResult를 지정하면 `403 FORBIDDEN`. |
-| FR7-6 | 상담사는 본인이 담당한 `Booking`에만 `ConsultationRecord`를 작성할 수 있다. 타 상담사 담당 예약에 기록 시도 시 `403 FORBIDDEN`. |
-| FR7-7 | 소유권 검증은 서비스 레이어에서 별도로 수행된다. RolesGuard는 역할 층만 담당하며 소유권을 대신하지 않는다. |
+| FR7-6 | 상담사는 본인이 담당한 `Booking`에만 `ConsultationRecord`를 작성할 수 있다. 타 상담사 담당 예약에 기록 시도 시 `403 FORBIDDEN`.                                        |
+| FR7-7 | 소유권 검증은 서비스 레이어에서 별도로 수행된다. RolesGuard는 역할 층만 담당하며 소유권을 대신하지 않는다.                                                             |
 
 ### FR8 — 검사결과 조회 (Test Result — seed + read-only)
 
-| ID | 요구사항 |
-|----|---------|
-| FR8-1 | 검사결과(`TestResult`)는 seed 데이터(JSON)로 제공되며, 조회 전용 API만 노출한다. |
-| FR8-2 | `GET /test-results`는 로그인 고객 본인 및 연결된 가족 구성원의 TestResult를 모두 반환한다(FamilyLink ACCEPTED 조건). |
-| FR8-3 | `TestResult`의 `metrics` 필드는 JSONB 배열로 저장되며, `metricKey`로 개별 지표를 참조할 수 있다. 각 지표 요소는 `{ metricKey, label?, value, unit?, referenceRange?, status? }` 형태이며, `referenceRange`/`status`는 기존 `{metricKey,value,unit}` 형태의 **하위호환 superset**으로 추가된다(누락 가능, 기존 소비자 무영향). `status ∈ {정상, 주의, 위험}`. |
-| FR8-4 | 검사결과 업로드·파싱 파이프라인은 `UploadPipeline` 인터페이스 경계로만 표현한다(구현 없음). |
+| ID    | 요구사항                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR8-1 | 검사결과(`TestResult`)는 seed 데이터(JSON)로 제공되며, 조회 전용 API만 노출한다.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| FR8-2 | `GET /test-results`는 로그인 고객 본인 및 연결된 가족 구성원의 TestResult를 모두 반환한다(FamilyLink ACCEPTED 조건).                                                                                                                                                                                                                                                                                                                                                                   |
+| FR8-3 | `TestResult`의 `metrics` 필드는 JSONB 배열로 저장되며, `metricKey`로 개별 지표를 참조할 수 있다. 각 지표 요소는 `{ metricKey, label?, value, unit?, referenceRange?, status? }` 형태이며, `referenceRange`/`status`는 기존 `{metricKey,value,unit}` 형태의 **하위호환 superset**으로 추가된다(누락 가능, 기존 소비자 무영향). `status ∈ {정상, 주의, 위험}`.                                                                                                                           |
+| FR8-4 | 검사결과 업로드·파싱 파이프라인은 `UploadPipeline` 인터페이스 경계로만 표현한다(구현 없음).                                                                                                                                                                                                                                                                                                                                                                                            |
 | FR8-5 | BioCom의 7종 검사 서비스(`serviceType`: `METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)가 시드된다. `serviceType`은 자유 문자열(ADR 0007: seed-only/read-only)이되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수에서 코드를 가져와 표류를 방지한다. 프론트엔드는 별도 라벨 맵(`SERVICE_TYPE_LABELS`)으로 한글 표시명을 매핑한다(예약·내 예약·검사결과 모든 표면에서 raw 코드 대신 친화 라벨을 노출). |
-| FR8-6 | 검사결과는 표시 레벨에서 **(subjectId + 검사일) 단위 "검사 결과서"**로 그룹핑된다(`lib/reports.ts`, 순수 함수). 검사결과 화면은 **`내 검사`/`연동 계정` 서브탭**으로 본인·가족 결과를 분리하고, 예약하기는 결과서 단위로 선택한다. 스키마/API 무변경 — `Booking.testResultId`는 subject 앵커이므로 대표 결과 id 전송으로 충분하다(ADR 0008). |
+| FR8-6 | 검사결과는 표시 레벨에서 **(subjectId + 검사일) 단위 "검사 결과서"**로 그룹핑된다(`lib/reports.ts`, 순수 함수). 검사결과 화면은 **`내 검사`/`연동 계정` 서브탭**으로 본인·가족 결과를 분리하고, 예약하기는 결과서 단위로 선택한다. 스키마/API 무변경 — `Booking.testResultId`는 subject 앵커이므로 대표 결과 id 전송으로 충분하다(ADR 0008).                                                                                                                                           |
 
 ### FR9 — 가족 연결 (Family Linking)
 
-| ID | 요구사항 |
-|----|---------|
+| ID    | 요구사항                                                                                                                                              |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR9-1 | 보호자 고객(`guardian`)은 `POST /family/invite-codes`로 초대 코드를 생성해 가족 구성원을 플랫폼 계정으로 연결할 수 있다(`FamilyLink status=PENDING`). |
-| FR9-2 | 상대 고객이 초대 코드를 수락하면 `FamilyLink status=ACCEPTED`로 전이되고, `inviteeCustomerId`가 수락 계정으로 설정된다(대칭 연결 성립). |
-| FR9-3 | `FamilyLink`는 `PENDING / ACCEPTED / REVOKED` 3단계 상태를 가지며, 보호자가 언제든 REVOKED로 철회할 수 있다. |
-| FR9-4 | FamilyLink는 만료 시각(`expiresAt`)을 포함해 기한이 지난 초대 코드를 무효화한다. |
+| FR9-2 | 상대 고객이 초대 코드를 수락하면 `FamilyLink status=ACCEPTED`로 전이되고, `inviteeCustomerId`가 수락 계정으로 설정된다(대칭 연결 성립).               |
+| FR9-3 | `FamilyLink`는 `PENDING / ACCEPTED / REVOKED` 3단계 상태를 가지며, 보호자가 언제든 REVOKED로 철회할 수 있다.                                          |
+| FR9-4 | FamilyLink는 만료 시각(`expiresAt`)을 포함해 기한이 지난 초대 코드를 무효화한다.                                                                      |
 
 ### FR10 — No-show 자동 처리 (Ops Hardening — ADR 0006)
 
-| ID | 요구사항 |
-|----|---------|
+| ID     | 요구사항                                                                                                                                                                                                                            |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR10-1 | 슬롯 종료 시각(`endAt`)이 지난 `CONFIRMED` 예약은 스케줄러(`sweepNoShows`)에 의해 자동으로 `NO_SHOW`로 전이된다. 상태 가드 `updateMany`(`status = CONFIRMED WHERE slot.endAt < now`)만 적용하여 `COMPLETED` 예약을 덮어쓰지 않는다. |
-| FR10-2 | 상담사는 본인 담당 `CONFIRMED` 예약에 대해 `PATCH /bookings/:id/attendance { status: 'COMPLETED' \| 'NO_SHOW' }`로 수동 override할 수 있다. 다른 상담사의 예약에 대한 시도는 `403`을 반환한다. |
-| FR10-3 | 관리자는 임의 예약의 attendance를 override할 수 있다. |
-| FR10-4 | `NO_SHOW`는 단말 상태다. 이후 다른 상태로 전이할 수 없다. 스케줄러도 이미 `NO_SHOW`인 예약을 재전이하지 않는다(멱등). |
+| FR10-2 | 상담사는 본인 담당 `CONFIRMED` 예약에 대해 `PATCH /bookings/:id/attendance { status: 'COMPLETED' \| 'NO_SHOW' }`로 수동 override할 수 있다. 다른 상담사의 예약에 대한 시도는 `403`을 반환한다.                                      |
+| FR10-3 | 관리자는 임의 예약의 attendance를 override할 수 있다.                                                                                                                                                                               |
+| FR10-4 | `NO_SHOW`는 단말 상태다. 이후 다른 상태로 전이할 수 없다. 스케줄러도 이미 `NO_SHOW`인 예약을 재전이하지 않는다(멱등).                                                                                                               |
 
 ### FR11 — 운영 깔때기 Analytics 확장 (Ops Hardening — ADR 0006)
 
-| ID | 요구사항 |
-|----|---------|
+| ID     | 요구사항                                                                                                                                                                                                             |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR11-1 | `GET /admin/analytics`는 기존 전환율·outcome 분포·상품 집계 외에 예약 상태별 수(`booked / confirmed / completed / noShow / cancelled`), `noShowRate`, `slotUtilization`, `waitlistConversionRate`를 추가로 반환한다. |
-| FR11-2 | `noShowRate = noShow / (noShow + completed)`로 정의한다(완료된 케이스 기준). |
-| FR11-3 | `slotUtilization = (confirmed + completed + noShow) / totalSlots`로 정의한다(선점된 슬롯 비율). |
-| FR11-4 | `waitlistConversionRate = CONVERTED / (CONVERTED + EXPIRED)`로 정의한다. 진행 중인 `WAITING`·`NOTIFIED` 항목은 분모에 포함하지 않는다. |
-| FR11-5 | 기존 `scope=own\|all` + `counselorId` 필터는 새 지표에도 동일하게 적용된다. |
+| FR11-2 | `noShowRate = noShow / (noShow + completed)`로 정의한다(완료된 케이스 기준).                                                                                                                                         |
+| FR11-3 | `slotUtilization = (confirmed + completed + noShow) / totalSlots`로 정의한다(선점된 슬롯 비율).                                                                                                                      |
+| FR11-4 | `waitlistConversionRate = CONVERTED / (CONVERTED + EXPIRED)`로 정의한다. 진행 중인 `WAITING`·`NOTIFIED` 항목은 분모에 포함하지 않는다.                                                                               |
+| FR11-5 | 기존 `scope=own\|all` + `counselorId` 필터는 새 지표에도 동일하게 적용된다.                                                                                                                                          |
 
 ### FR12 — Availability Slot CRUD (Ops Hardening — ADR 0006)
 
-| ID | 요구사항 |
-|----|---------|
-| FR12-1 | 상담사는 `POST /counselors/slots`로 본인의 슬롯을 배치 생성할 수 있다. 배열은 단일 트랜잭션으로 처리된다(all-or-nothing). |
+| ID     | 요구사항                                                                                                                                                                                                                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR12-1 | 상담사는 `POST /counselors/slots`로 본인의 슬롯을 배치 생성할 수 있다. 배열은 단일 트랜잭션으로 처리된다(all-or-nothing).                                                                                                                   |
 | FR12-2 | 동일 상담사 슬롯이 반개방 구간(`startAt < existingEnd AND endAt > existingStart`)으로 겹치면 `409 CONFLICT`를 반환한다. 배치 내 슬롯 간 중첩도 동일 규칙으로 거부된다. 슬롯이 정확히 앞뒤로 맞닿은 경우(`endAt = startAt`)는 중첩이 아니다. |
-| FR12-3 | 상담사는 `PATCH /slots/:id`로 본인 슬롯을 수정, `DELETE /slots/:id`로 삭제할 수 있다. 활성 예약(`PENDING` 또는 `CONFIRMED`)이 있는 슬롯 삭제 시도는 `409 CONFLICT`를 반환한다. |
-| FR12-4 | 관리자는 `POST/PATCH/DELETE /admin/counselors/:id/slots` 및 `/admin/slots/:id`로 임의 상담사의 슬롯을 관리할 수 있다. |
+| FR12-3 | 상담사는 `PATCH /slots/:id`로 본인 슬롯을 수정, `DELETE /slots/:id`로 삭제할 수 있다. 활성 예약(`PENDING` 또는 `CONFIRMED`)이 있는 슬롯 삭제 시도는 `409 CONFLICT`를 반환한다.                                                              |
+| FR12-4 | 관리자는 `POST/PATCH/DELETE /admin/counselors/:id/slots` 및 `/admin/slots/:id`로 임의 상담사의 슬롯을 관리할 수 있다.                                                                                                                       |
+
+### FR14 — 상담 준비·생산성 자동화 (ADR 0014)
+
+| ID     | 요구사항                                                                                                                                                                                                                                                                                                      |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR14-1 | 상담사는 `GET /counselor/bookings/:bookingId/brief`로 결정론 브리핑을 조회할 수 있다. 브리핑은 TestResult 지표(`metricKey` asc, 이상 플래그 포함) + 과거 ConsultationRecord(`createdAt` desc) + ACCEPTED FamilyLink 맥락 + 고객 선택 `concern`을 서버가 읽기 전용으로 조립한다. 타 상담사 예약 조회 시 `403`. |
+| FR14-2 | 브리핑을 최초 조회하면 `Booking.briefOpenedAt`이 해당 시각으로 1회만 기록된다(조건부 `updateMany({ where: { briefOpenedAt: null } })` — DB 레이어 멱등, 2회 이상 호출해도 시각 불변).                                                                                                                         |
+| FR14-3 | 고객은 예약 생성 시 선택적으로 `concern`(사전질문, `@MaxLength(1000)`)을 함께 전달할 수 있다. `concern`은 브리핑 조립에만 사용되며 고객 API로 반환되지 않는다(write-only).                                                                                                                                    |
+| FR14-4 | 다가오는 상담을 어떻게 진행할지에 대한 **상담 전 가이던스**는 대상자의 검사 지표 + 과거 상담 기록(+ `concern`)에서 파생되어 상담사 사전 브리핑에 노출된다. 브리핑을 열면(`getBookingBrief` → `GuidanceService.ensureFallbackForBooking`) 결정론 템플릿 FALLBACK 가이던스가 `ConsultationBriefGuidance(bookingId-keyed, status=FALLBACK)`로 보장된다. LLM은 critical path에 있지 않으며, `createRecord`는 가이던스를 건드리지 않는다. |
+| FR14-5 | OpsScheduler `@Interval` 스윕(`sweepPendingUpgrades`)이 `status=FALLBACK` 행만 대상으로 Ollama(`OLLAMA_BASE_URL`, 기본 `http://localhost:11434`) `SUMMARY_MODEL`(기본 `gemma4:e4b`)로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade 하지 않는다. 멱등. 수동 트리거 엔드포인트는 두지 않는다(서버 자동 수행).                     |
+| FR14-6 | Ollama 미설치·연결 실패·env 미설정 시 스윕은 해당 사이클을 건너뛰고 FALLBACK 행을 유지한다(fail-soft). 환경 변수 미설정 시 기본값 사용, startup assertion 없음.                                                                                                                                               |
+| FR14-7 | `GET /admin/analytics`는 `briefOpenRate`(분자=`briefOpenedAt != null`, 분모=`status IN (CONFIRMED,COMPLETED,NO_SHOW)`)를 headline 생산성 지표로 반환한다. 기존 `scope=own\|all`+`counselorId` 필터를 준수한다. |
 
 ### FR13 — 관리 프로그램(챌린지) 카탈로그 및 등록 (BioCom step-3 — ADR 0007)
 
-| ID | 요구사항 |
-|----|---------|
-| FR13-1 | `Challenge`(`id, name, category, description, linkedServiceType?`)는 시드 관리 카탈로그다. 상담사는 `GET /challenges`로 전체 카탈로그를 조회할 수 있다. `linkedServiceType`은 **advisory(정렬/힌트 전용)**이며 카탈로그를 필터링하지 않는다 — 항상 전체 목록을 제공한다. |
-| FR13-2 | 상담사는 상담 기록 생성 시(`POST /consultation-records`) 선택적 단일 `challengeId`를 함께 전달해 고객을 관리 프로그램에 등록(`ChallengeEnrollment`)할 수 있다. 등록은 **상담 기록 생성 트랜잭션 안에서 원자적으로** 발생한다(`createRecord` 전용; `updateRecord`는 등록을 생성·변경하지 않는다). |
-| FR13-3 | 등록은 outcome에 **코드로 게이팅되지 않는다** — 서버는 어떤 outcome에서도 `challengeId`를 수락한다. 구매(`PURCHASED`)와의 연관은 UI 컨벤션(PURCHASED 경로에서 Select 노출)과 Analytics 해석(전환율 분모=PURCHASED 기록)에서만 표현된다. |
-| FR13-4 | `challengeId`가 존재하지 않는 챌린지를 가리키면 트랜잭션 진입 **전** `findUnique` 가드가 `404 NOT_FOUND`를 반환한다(트랜잭션 중간 실패 대신 깨끗한 404). `challengeId`가 없으면 등록 분기는 실행되지 않아 기존 기록 생성 동작에 영향이 없다. |
+| ID     | 요구사항                                                                                                                                                                                                                                                                                                                                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| FR13-1 | `Challenge`(`id, name, category, description, linkedServiceType?`)는 시드 관리 카탈로그다. 상담사는 `GET /challenges`로 전체 카탈로그를 조회할 수 있다. `linkedServiceType`은 **advisory(정렬/힌트 전용)**이며 카탈로그를 필터링하지 않는다 — 항상 전체 목록을 제공한다.                                                                                     |
+| FR13-2 | 상담사는 상담 기록 생성 시(`POST /consultation-records`) 선택적 단일 `challengeId`를 함께 전달해 고객을 관리 프로그램에 등록(`ChallengeEnrollment`)할 수 있다. 등록은 **상담 기록 생성 트랜잭션 안에서 원자적으로** 발생한다(`createRecord` 전용; `updateRecord`는 등록을 생성·변경하지 않는다).                                                             |
+| FR13-3 | 등록은 outcome에 **코드로 게이팅되지 않는다** — 서버는 어떤 outcome에서도 `challengeId`를 수락한다. 구매(`PURCHASED`)와의 연관은 UI 컨벤션(PURCHASED 경로에서 Select 노출)과 Analytics 해석(전환율 분모=PURCHASED 기록)에서만 표현된다.                                                                                                                      |
+| FR13-4 | `challengeId`가 존재하지 않는 챌린지를 가리키면 트랜잭션 진입 **전** `findUnique` 가드가 `404 NOT_FOUND`를 반환한다(트랜잭션 중간 실패 대신 깨끗한 404). `challengeId`가 없으면 등록 분기는 실행되지 않아 기존 기록 생성 동작에 영향이 없다.                                                                                                                 |
 | FR13-5 | `ChallengeEnrollment`(`id, challengeId, customerId, recordId, counselorId, status, enrolledAt`)는 `challengeId/customerId/recordId/counselorId` 4개 FK를 모두 `onDelete: Cascade`로 선언하고, `@@unique([recordId])`로 한 상담 기록당 최대 1건의 등록을 보장한다. `status ∈ ChallengeEnrollmentStatus{IN_PROGRESS, COMPLETED, DROPPED}`(기본 `IN_PROGRESS`). |
-| FR13-6 | `counselorId`는 쿼리 편의를 위해 비정규화 저장하되, Analytics 전환율 산정은 **항상** 연결된 `ConsultationRecord`의 `counselorId`(record JOIN)를 기준으로 한다. |
+| FR13-6 | `counselorId`는 쿼리 편의를 위해 비정규화 저장하되, Analytics 전환율 산정은 **항상** 연결된 `ConsultationRecord`의 `counselorId`(record JOIN)를 기준으로 한다.                                                                                                                                                                                               |
 
 ---
 
@@ -172,41 +184,41 @@
 
 ### NFR1 — 재현성 (Reproducibility)
 
-| ID | 요구사항 |
-|----|---------|
-| NFR1-1 | 외부 계정, API 키, 유료 서비스 의존이 **0개**여야 한다. 평가자가 계정 없이 전체 골든 패스를 실행할 수 있어야 한다. |
-| NFR1-2 | `docker compose up` 단일 명령으로 PostgreSQL을 포함한 모든 인프라가 기동된다. |
+| ID     | 요구사항                                                                                                                                                                                                                                                                                                            |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR1-1 | 외부 계정, API 키, 유료 서비스 의존이 **0개**여야 한다. 평가자가 계정 없이 전체 골든 패스를 실행할 수 있어야 한다.                                                                                                                                                                                                  |
+| NFR1-2 | `docker compose up` 단일 명령으로 PostgreSQL을 포함한 모든 인프라가 기동된다.                                                                                                                                                                                                                                       |
 | NFR1-3 | `prisma migrate deploy && prisma db seed`로 스키마 적용과 결정적 초기 데이터(고객·상담사2명·관리자·가족 계정, AvailabilitySlot 그리드, BioCom 7종 TestResult(참조범위·상태 포함), BioCom 보충제 Product 라인, `Challenge` 카탈로그 4건 + 데모 `ChallengeEnrollment` 1건, 고객↔가족 ACCEPTED FamilyLink)가 적재된다. |
-| NFR1-4 | SMS·이메일 등 외부 알림 채널은 시뮬레이션(콘솔 출력 + DB 레코드)으로 대체한다. |
-| NFR1-5 | README에 사전 요건, 기동 절차, seed 계정 표, 골든 패스 클릭 시나리오가 명시된다. |
+| NFR1-4 | SMS·이메일 등 외부 알림 채널은 시뮬레이션(콘솔 출력 + DB 레코드)으로 대체한다.                                                                                                                                                                                                                                      |
+| NFR1-5 | README에 사전 요건, 기동 절차, seed 계정 표, 골든 패스 클릭 시나리오가 명시된다.                                                                                                                                                                                                                                    |
 
 ### NFR2 — 동시성 정확성 (Concurrency Correctness)
 
-| ID | 요구사항 |
-|----|---------|
-| NFR2-1 | 동일 슬롯에 대한 동시 예약 요청이 복수 ACTIVE(PENDING 또는 CONFIRMED) 상태로 저장되지 않는다. |
-| NFR2-2 | 구현 패턴은 **insert-first, catch-violation**: 트랜잭션 내에서 `Booking` INSERT를 즉시 시도하고, PostgreSQL unique violation(`SQLSTATE 23505`)을 `ConflictException(409)`로 매핑한다. check-then-insert 패턴의 TOCTOU 경쟁 조건을 배제한다. |
+| ID     | 요구사항                                                                                                                                                                                                                                                                    |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR2-1 | 동일 슬롯에 대한 동시 예약 요청이 복수 ACTIVE(PENDING 또는 CONFIRMED) 상태로 저장되지 않는다.                                                                                                                                                                               |
+| NFR2-2 | 구현 패턴은 **insert-first, catch-violation**: 트랜잭션 내에서 `Booking` INSERT를 즉시 시도하고, PostgreSQL unique violation(`SQLSTATE 23505`)을 `ConflictException(409)`로 매핑한다. check-then-insert 패턴의 TOCTOU 경쟁 조건을 배제한다.                                 |
 | NFR2-3 | `AvailabilitySlot.slotId`에 부분 unique 인덱스(`WHERE status IN ('PENDING','CONFIRMED')`)를 적용한다. PENDING 상태도 슬롯을 선점하므로, 두 고객이 동시에 PENDING 상태로 진입하는 것을 방지한다. CANCELLED/COMPLETED 예약은 인덱스 조건에서 제외되어 슬롯 재예약이 허용된다. |
-| NFR2-4 | 동시성 정확성은 주장이 아니라 **통합 테스트(`booking.concurrency.spec.ts`)**로 증명한다: 동일 슬롯에 20개 동시 요청 → 성공 1건, 409 19건, DB `Booking` count = 1 assert. |
+| NFR2-4 | 동시성 정확성은 주장이 아니라 **통합 테스트(`booking.concurrency.spec.ts`)**로 증명한다: 동일 슬롯에 20개 동시 요청 → 성공 1건, 409 19건, DB `Booking` count = 1 assert.                                                                                                    |
 
 ### NFR3 — 보안 및 권한 (Security & Authorization)
 
-| ID | 요구사항 |
-|----|---------|
-| NFR3-1 | 인증은 JWT 기반이며, `role` claim으로 역할(CUSTOMER / COUNSELOR / ADMIN)을 식별한다. 프론트엔드에서 JWT는 httpOnly 쿠키(`allosta_session`)에 저장되며 클라이언트 JS가 직접 접근할 수 없다. |
-| NFR3-2 | 역할 층(RolesGuard)과 소유권 층(서비스 레이어 가드)은 분리 구현된다. 이 분리가 설계 판단의 핵심 신호다. |
-| NFR3-3 | 비밀번호는 bcrypt로 해싱한다. JWT secret은 환경 변수로 주입된다. |
-| NFR3-4 | 역할·소유권 거부 케이스는 각각 별도 통합 테스트(`rbac.spec.ts`)로 검증된다. |
+| ID     | 요구사항                                                                                                                                                                                                                                                                              |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR3-1 | 인증은 JWT 기반이며, `role` claim으로 역할(CUSTOMER / COUNSELOR / ADMIN)을 식별한다. 프론트엔드에서 JWT는 httpOnly 쿠키(`allosta_session`)에 저장되며 클라이언트 JS가 직접 접근할 수 없다.                                                                                            |
+| NFR3-2 | 역할 층(RolesGuard)과 소유권 층(서비스 레이어 가드)은 분리 구현된다. 이 분리가 설계 판단의 핵심 신호다.                                                                                                                                                                               |
+| NFR3-3 | 비밀번호는 bcrypt로 해싱한다. JWT secret은 환경 변수로 주입된다.                                                                                                                                                                                                                      |
+| NFR3-4 | 역할·소유권 거부 케이스는 각각 별도 통합 테스트(`rbac.spec.ts`)로 검증된다.                                                                                                                                                                                                           |
 | NFR3-5 | Next.js Middleware가 역할별 라우트 보호를 수행한다: CUSTOMER(`/book`, `/bookings`, `/results`), COUNSELOR(`/schedule`, `/performance`), ADMIN(`/dashboard`). API 프록시(`/api/proxy/**`)가 JWT를 httpOnly 쿠키에서 추출해 NestJS로 전달하므로 클라이언트 JS는 토큰을 노출하지 않는다. |
 
 ### NFR4 — 2주 솔로 일정 제약 (Solo 2-Week Budget)
 
-| ID | 요구사항 |
-|----|---------|
+| ID     | 요구사항                                                                                                                                                             |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | NFR4-1 | 모든 컴포넌트를 동일 깊이로 구현하지 않는다. Booking·CRM·Analytics는 **REAL** 구현, TestResult는 **seed + read-only**, Notification은 **SIMULATED**로 차등 처리한다. |
-| NFR4-2 | 미구현 외부 연동(SMS·이메일·업로드 파이프라인)은 "안 했다"가 아니라 어댑터 인터페이스(`NotificationChannel`, `UploadPipeline`) 경계로 표현한다. |
-| NFR4-3 | 레포는 단일 모노레포(`backend/`, `frontend/`, `docs/`, `docker-compose.yml`)로 구성한다. 평가자가 한 번 클론·한 번 기동으로 재현 가능하도록 한다. |
-| NFR4-4 | 설계 문서가 1차 산출물이다. 구현은 골든 패스 1개를 증명하는 보조 증거다. 설계 문서는 코드보다 먼저 완성한다. |
+| NFR4-2 | 미구현 외부 연동(SMS·이메일·업로드 파이프라인)은 "안 했다"가 아니라 어댑터 인터페이스(`NotificationChannel`, `UploadPipeline`) 경계로 표현한다.                      |
+| NFR4-3 | 레포는 단일 모노레포(`backend/`, `frontend/`, `docs/`, `docker-compose.yml`)로 구성한다. 평가자가 한 번 클론·한 번 기동으로 재현 가능하도록 한다.                    |
+| NFR4-4 | 설계 문서가 1차 산출물이다. 구현은 골든 패스 1개를 증명하는 보조 증거다. 설계 문서는 코드보다 먼저 완성한다.                                                         |
 
 ---
 
@@ -215,48 +227,55 @@
 > 아래 표의 각 항목은 검증 방법을 명시한 형태로 기술된다.
 > "통합 테스트"는 NestJS + supertest 기반 백엔드 통합 테스트를 의미한다.
 
-| AC | 검증 가능 기준 | 검증 방법 |
-|----|--------------|----------|
-| **AC1** 예약 생성 (PENDING-first) | 고객 계정 로그인 → `GET /counselors/availability-calendar`로 가용 슬롯 확인 → `POST /bookings { slotId, testResultId }`로 예약 생성 시 `201` + `Booking(status=PENDING)` 반환. 해당 슬롯은 이후 가용 목록에서 제외된다. 상담사가 `PATCH /bookings/:id/confirm`으로 확정 시 `status=CONFIRMED`. | `golden-path.e2e-spec.ts` (supertest) + README 워크스루 |
-| **AC2** 동시 예약 방지 | 동일 슬롯에 20개 동시 `POST /bookings` 발사 시 정확히 1건만 `201`, 나머지 19건은 `409 CONFLICT`. DB에 ACTIVE(`PENDING` 또는 `CONFIRMED`) Booking이 정확히 1건. | `booking.concurrency.spec.ts` — `Promise.all` 20 concurrent → 성공 1·409 19·DB count=1 assert |
-| **AC3** 검사결과 기반 예약 | 예약 시 유효한 `testResultId`를 지정하면 `subjectType=CUSTOMER` + `subjectId`(소유 고객)가 서버에서 자동 파생되어 `201`. 본인도 `ACCEPTED` 파트너도 아닌 고객의 TestResult 지정 시 `403`. | 통합 테스트: 본인 TestResult 성공 / `ACCEPTED` 가족 파트너 TestResult 성공 / 비연결 고객 TestResult 403 |
-| **AC4** 구조화 상담 기록 | 상담사가 `GET /counselor/schedule`으로 본인 일정 확인 후 `POST /consultation-records`로 `summary`(필수) + `recommendation`(필수) + `followUp`(선택) + `interestedProducts[]` + `outcome ∈ {EXPLAINED, GUIDED, PURCHASED}` + `actions[]` 입력. 본인 담당 예약에만 성공(`201`), 타 상담사 담당 예약 시도 시 `403`. `summary`·`recommendation` 빈값은 거부(`400`). | 통합 테스트: 담당 성공 / 비담당 403 / outcome enum 검증 / summary·recommendation 빈값 400(필수 검증) |
-| **AC5** 알림 (시뮬레이션) | 예약 생성 시 `type=CONFIRMATION` Notification 즉시 생성. 스케줄 잡 트리거 시 due `type=REMINDER` Notification이 `status PENDING → SENT`로 전이. 콘솔·인앱 출력 확인. | 단위/통합: 즉생성 assert + 스케줄러 수동 트리거(`trigger-scheduler.ts`) 후 SENT 전이 assert |
-| **AC6** 전환 집계 대시보드 | `GET /admin/analytics`가 `ConsultationRecord` 전체에서 전환율(`PURCHASED` / 전체), outcome 분포, 상품별 관심 카운트를 **실시간 집계**해 반환. 관리자 대시보드 차트에 표시. | 통합 테스트: seed 기록 N건 후 응답의 전환율·상품 카운트가 기대값과 일치 assert |
-| **AC7** 3-role RBAC (역할 층) | 고객 → `/admin/*` `403`. 상담사 → 타 상담사 일정 `403`. 미인증 → `401`. JWT role claim 기반 Guard 차단. | `rbac.spec.ts`: 역할별 거부 케이스 각각 assert |
-| **AC7b** 소유권 권한 (자원 층) | 고객은 본인 또는 `ACCEPTED` `FamilyLink` 파트너의 TestResult로만 예약 가능. 비연결 고객 TestResult → `403`. 상담사는 본인 담당 `Booking`에만 `ConsultationRecord` 작성 가능. 타 상담사 예약 → `403`. | `rbac.spec.ts`: 소유권 거부 케이스 각각 assert |
-| **AC8** 로컬 재현 | README 절차대로 외부 계정·키 **0개**로 `docker compose up` + seed + FE 기동 → 골든 패스(예약→확정→상담기록→집계)를 끝까지 수행 가능. seed 계정(고객·상담사·관리자·가족) 제공. | 깨끗한 환경에서 README 1회 수동 워크스루 + `golden-path.e2e-spec.ts` green |
-| **AC9** 지표 연결 및 지표별 전환 (R5) | 상담사가 기록 생성 시 `metricRefs[]`로 논의 지표를 연결 가능. `GET /admin/analytics`가 지표별 전환율을 집계 반환. seed 기록으로 기대값 일치 assert. | 통합 테스트: `ConsultationRecordMetric` 저장 확인 + Analytics 지표별 전환 집계값 assert |
-| **AC10** Waitlist 및 공석 알림 (R4) | 가용 슬롯 없을 때 `POST /waitlist` 등록 `201`. 해당 상담사 `Booking` 취소 시 `WAITING` 1건이 `NOTIFIED`로 전이 + `SLOT_OPENED` Notification 1건 생성(FIFO). | 통합 테스트: waitlist 등록 → 예약 취소 → NOTIFIED 전이 1건 + Notification 생성 1건 assert |
-| **AC11** Analytics 범위 토글 | 상담사가 `GET /admin/analytics?scope=own`(기본)으로 본인 예약만 집계, `scope=all`로 전체 집계 확인. 관리자가 `?counselorId=<id>`로 특정 상담사 집계 조회. | `analytics.scope.spec.ts`: 범위별 집계값 분리 assert |
-| **AC-N1** 자동 no-show 전이 | `sweepNoShows()` 호출 시 `slot.endAt < now`인 `CONFIRMED` 예약이 `NO_SHOW`로 전이된다. `COMPLETED` 예약은 변경되지 않는다(상태 가드). | 통합 테스트: CONFIRMED 예약의 슬롯 endAt을 과거로 설정 후 sweep 호출 → NO_SHOW assert. COMPLETED 예약은 불변 assert. |
-| **AC-N2** 상담사 수동 override | 담당 상담사가 `PATCH /bookings/:id/attendance { status: 'COMPLETED' }` → CONFIRMED→COMPLETED 성공. 비담당 상담사는 `403`. | 통합 테스트: 담당 성공 / 비담당 403 assert |
-| **AC-N3** sweep 멱등성 | `sweepNoShows()` 2회 호출 시 결과 동일. NO_SHOW 예약이 재전이되지 않는다. | 통합 테스트: sweep 2회 실행 후 상태 카운트 동일 assert |
-| **AC-N4** 양방향 override | 담당 상담사는 attendance override로 `NO_SHOW ⇄ COMPLETED` 양방향 정정이 가능하다(자동 판정 번복 포함, 상담기록 존재 불요). | 통합 테스트: NO_SHOW 예약에 PATCH /attendance `{ status: 'COMPLETED' }` → 200 + COMPLETED 전이 assert |
-| **AC-N5** COMPLETED 불가침 | no-show sweep이 COMPLETED 예약을 덮어쓰지 않는다. COMPLETED 예약이 CONFIRMED와 동일 endAt < now 조건이어도 무변. | 통합 테스트: COMPLETED + CONFIRMED 예약이 동일 조건 → sweep 후 COMPLETED 불변, CONFIRMED만 NO_SHOW 전이 assert |
-| **AC-N6** NO_SHOW 일정 가시성 | `GET /counselor/schedule`이 `NO_SHOW` 예약을 (취소 제외) 본인 예약과 함께 반환해, 상담사가 미방문 상담도 콘솔에서 검토·필터할 수 있다. | `no-show-loop.spec.ts`: NO_SHOW 예약 생성 후 스케줄 응답에 해당 `bookingId`가 `status=NO_SHOW`로 포함됨 assert |
-| **AC-UX1** 콘솔 일정 필터·그룹핑 | 상담사 콘솔의 `/schedule`은 기간(오늘/예정/지난/전체)·예약상태(전체/예약중/예약완료/완료/노쇼) 2축 필터와 날짜별 그룹핑(헤더+건수)을 제공한다. `/availability`는 슬롯을 날짜별 그룹(예약가능/전체 카운트)으로 표시한다. 필터·그룹핑은 순수 함수로 분리되어 단위 테스트된다. | 단위 테스트(vitest): `shared/lib/date`(`matchesScope`·`groupByDay`·`formatDayHeader`) + `views/schedule/lib/filter`(`selectScheduleGroups`·`countByStatus`) + `views/availability/lib/grouping`(`selectSlotGroups`·`summarizeSlots`) |
-| **AC-W1** 공석 시 NOTIFIED 전이 | 취소 트랜잭션 내에서 해당 상담사의 첫 WAITING Waitlist 1건이 NOTIFIED로 전이된다. `offeredSlotId`와 `offerExpiresAt`이 설정된다. | 통합 테스트: waitlist 등록 → 예약 취소 → NOTIFIED 1건 + offeredSlotId 설정 assert |
-| **AC-W2** SLOT_OPENED 알림 생성 | NOTIFIED 전이 시 `type=SLOT_OPENED` Notification 1건이 원자적으로 생성된다. | 통합 테스트: Notification count +1 + waitlistId 연결 assert |
-| **AC-W3** TTL 만료 → EXPIRED | `offerExpiresAt` 경과 후 `sweepWaitlistOffers()` 호출 시 NOTIFIED 항목이 EXPIRED로 전이된다. | 통합 테스트: offerExpiresAt을 과거로 설정 후 sweep → EXPIRED assert |
-| **AC-W4** 예약 성공 → CONVERTED | NOTIFIED 대기자가 offeredSlot으로 예약을 생성하면 Waitlist 항목이 CONVERTED로 전이된다. | 통합 테스트: NOTIFIED 항목 → 해당 슬롯 예약 생성 → CONVERTED assert |
-| **AC-W5** 전환율 계산 | `waitlistConversionRate = CONVERTED / (CONVERTED + EXPIRED)`. WAITING·NOTIFIED는 분모 제외. | 통합 테스트: CONVERTED N건 + EXPIRED M건 seed 후 analytics API 응답 비율 assert |
-| **AC-A1** 운영 지표 반환 | `GET /admin/analytics` 응답에 `booked / confirmed / completed / noShow / cancelled` 카운트 + `noShowRate` + `slotUtilization` + `waitlistConversionRate` 포함. | 통합 테스트: seed 후 응답 필드 존재·계산값 일치 assert |
-| **AC-A2** 신규 지표 범위 토글 | scope=own/all + counselorId 필터가 신규 ops 지표에도 적용된다. | 통합 테스트: 범위별로 noShowRate 분리 집계 assert |
-| **AC-A3** noShowRate 정의 | `noShowRate = noShow / (noShow + completed)`. 단말 상태 케이스 기준. 분모 0이면 `0` 반환. | 통합 테스트: N건 seed 후 기대값 일치 assert |
-| **AC-A4** slotUtilization 정의 | `slotUtilization = (confirmed + completed + noShow) / totalSlots`. 선점된 슬롯 비율. 분모 0이면 `null`. | 통합 테스트: slot N개, booking M건 seed 후 기대값 일치 assert |
-| **AC-S1** 슬롯 단건·배치 생성 | 상담사가 `POST /counselors/slots [{ startAt, endAt }]`로 슬롯 생성 시 `201`. CUSTOMER 역할로 시도 시 `403`. | 통합 테스트: 단건 201 / 배치 201 / CUSTOMER 403 assert |
-| **AC-S2** 배치 all-or-nothing | 배치 내 하나라도 중첩이면 전체 거부(`409`). 일부만 저장되지 않는다. | 통합 테스트: 유효 슬롯 + 중첩 슬롯 배치 → 409 + 저장 0건 assert |
-| **AC-S3** 중첩 슬롯 409 가드 | 동일 상담사의 기존 슬롯과 반개방 구간으로 겹치는 슬롯 생성 시 `409`. 정확히 뒤이은 슬롯(`endAt = nextStartAt`)은 허용. | 통합 테스트: 겹침 409 / 맞닿음 201 assert |
-| **AC-S4** 활성 예약 있는 슬롯 삭제 거부 | PENDING 또는 CONFIRMED 예약이 있는 슬롯 `DELETE /slots/:id` 시도 시 `409`. 예약 없는 슬롯은 `200`. | 통합 테스트: 예약 있는 슬롯 409 / 없는 슬롯 200 assert |
-| **AC-S5** 관리자 슬롯 관리 | 관리자가 존재하지 않는 상담사 ID로 슬롯 생성 시 `404`. 존재하는 상담사에 대해 생성·수정·삭제 가능. | 통합 테스트: 없는 counselorId 404 / 존재하는 counselorId 201 + PATCH 200 + DELETE 200 assert |
-| **AC-C1** 챌린지 카탈로그 조회 | 상담사가 `GET /challenges`로 전체 챌린지 카탈로그를 조회한다(`linkedServiceType` 필터 없이 전체). | 통합 테스트: 시드 챌린지 4건이 카테고리·이름 정렬로 반환 assert |
-| **AC-C2** 상담 기록 생성 시 등록 | 상담사가 `POST /consultation-records`에 `challengeId`를 포함하면 `recordId/customerId/counselorId`에 연결된 `ChallengeEnrollment` 정확히 1건이 동일 트랜잭션에서 생성된다. `challengeId` 없이 생성 시 등록은 발생하지 않는다(회귀 가드). | 통합 테스트(`challenge-enrollment.spec.ts`): challengeId 포함 → 등록 1건 / 미포함 → 등록 0건 assert |
-| **AC-C3** 등록 소유권·유효성 | 타 상담사 담당 예약에 기록+등록 시도 시 `403`. 존재하지 않는 `challengeId` 지정 시 트랜잭션 진입 전 `404`(기록 미생성). 동일 record에 대한 2차 등록은 `@@unique([recordId])`로 차단된다. | 통합 테스트: 비담당 403 / 잘못된 challengeId 404(기록 0건) / 중복 등록 위반 assert(2차 등록은 `prisma.challengeEnrollment.create` 직접 삽입으로 검증) |
-| **AC-C4** 챌린지 등록 Analytics | `GET /admin/analytics`가 `challengeEnrollments`(등록 수) + `challengeConversionRate`(구매→등록 전환율, `number\|null`)를 반환한다. 범위는 record JOIN의 counselorId로 산정되며, scope=own/all + counselorId 필터를 준수한다. | 통합 테스트(`analytics-challenge.spec.ts`): 등록 수·전환율 일치 + disjoint 상담사 범위 분리 + record JOIN 스코핑 assert |
-| **AC-C5** 전환율 0-vs-null 구분 | `challengeConversionRate`는 PURCHASED 기록이 0건이면 `null`(데이터 없음), PURCHASED 기록이 있으나 등록이 0건이면 `0`(전환 없음)을 반환해 두 경우를 구분한다. | 통합 테스트: PURCHASED 0건 → null / PURCHASED 있고 등록 0건 → 0 assert |
-| **AC-M1** 검사 지표 참조범위·상태 | 시드된 BioCom `TestResult`의 각 지표가 `referenceRange`와 `status(정상/주의/위험)`를 읽기 API로 노출한다. | 통합 테스트(`test-result-metrics.spec.ts`): 시드 지표가 referenceRange/status 노출 assert |
-| **AC-M2** 결과 페이지 상태 배지 | 고객 결과 페이지가 지표별 참조범위 컬럼과 상태 배지(정상=teal/주의=amber/위험=red)를 렌더한다. 프론트 타입 경계(`TestMetric`)가 새 필드를 드롭하지 않는다. | 프론트 단위 테스트(`toMetricList` 확장 형태 보존) + e2e 골든패스 상태 배지 가시성 assert |
+| AC                                      | 검증 가능 기준                                                                                                                                                                                                                                                                                                                                                  | 검증 방법                                                                                                                                                                                                                            |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **AC1** 예약 생성 (PENDING-first)       | 고객 계정 로그인 → `GET /counselors/availability-calendar`로 가용 슬롯 확인 → `POST /bookings { slotId, testResultId }`로 예약 생성 시 `201` + `Booking(status=PENDING)` 반환. 해당 슬롯은 이후 가용 목록에서 제외된다. 상담사가 `PATCH /bookings/:id/confirm`으로 확정 시 `status=CONFIRMED`.                                                                  | `golden-path.e2e-spec.ts` (supertest) + README 워크스루                                                                                                                                                                              |
+| **AC2** 동시 예약 방지                  | 동일 슬롯에 20개 동시 `POST /bookings` 발사 시 정확히 1건만 `201`, 나머지 19건은 `409 CONFLICT`. DB에 ACTIVE(`PENDING` 또는 `CONFIRMED`) Booking이 정확히 1건.                                                                                                                                                                                                  | `booking.concurrency.spec.ts` — `Promise.all` 20 concurrent → 성공 1·409 19·DB count=1 assert                                                                                                                                        |
+| **AC3** 검사결과 기반 예약              | 예약 시 유효한 `testResultId`를 지정하면 `subjectType=CUSTOMER` + `subjectId`(소유 고객)가 서버에서 자동 파생되어 `201`. 본인도 `ACCEPTED` 파트너도 아닌 고객의 TestResult 지정 시 `403`.                                                                                                                                                                       | 통합 테스트: 본인 TestResult 성공 / `ACCEPTED` 가족 파트너 TestResult 성공 / 비연결 고객 TestResult 403                                                                                                                              |
+| **AC4** 구조화 상담 기록                | 상담사가 `GET /counselor/schedule`으로 본인 일정 확인 후 `POST /consultation-records`로 `summary`(필수) + `recommendation`(필수) + `followUp`(선택) + `interestedProducts[]` + `outcome ∈ {EXPLAINED, GUIDED, PURCHASED}` + `actions[]` 입력. 본인 담당 예약에만 성공(`201`), 타 상담사 담당 예약 시도 시 `403`. `summary`·`recommendation` 빈값은 거부(`400`). | 통합 테스트: 담당 성공 / 비담당 403 / outcome enum 검증 / summary·recommendation 빈값 400(필수 검증)                                                                                                                                 |
+| **AC5** 알림 (시뮬레이션)               | 예약 생성 시 `type=CONFIRMATION` Notification 즉시 생성. 스케줄 잡 트리거 시 due `type=REMINDER` Notification이 `status PENDING → SENT`로 전이. 콘솔·인앱 출력 확인.                                                                                                                                                                                            | 단위/통합: 즉생성 assert + 스케줄러 수동 트리거(`trigger-scheduler.ts`) 후 SENT 전이 assert                                                                                                                                          |
+| **AC6** 전환 집계 대시보드              | `GET /admin/analytics`가 `ConsultationRecord` 전체에서 전환율(`PURCHASED` / 전체), outcome 분포, 상품별 관심 카운트를 **실시간 집계**해 반환. 관리자 대시보드 차트에 표시.                                                                                                                                                                                      | 통합 테스트: seed 기록 N건 후 응답의 전환율·상품 카운트가 기대값과 일치 assert                                                                                                                                                       |
+| **AC7** 3-role RBAC (역할 층)           | 고객 → `/admin/*` `403`. 상담사 → 타 상담사 일정 `403`. 미인증 → `401`. JWT role claim 기반 Guard 차단.                                                                                                                                                                                                                                                         | `rbac.spec.ts`: 역할별 거부 케이스 각각 assert                                                                                                                                                                                       |
+| **AC7b** 소유권 권한 (자원 층)          | 고객은 본인 또는 `ACCEPTED` `FamilyLink` 파트너의 TestResult로만 예약 가능. 비연결 고객 TestResult → `403`. 상담사는 본인 담당 `Booking`에만 `ConsultationRecord` 작성 가능. 타 상담사 예약 → `403`.                                                                                                                                                            | `rbac.spec.ts`: 소유권 거부 케이스 각각 assert                                                                                                                                                                                       |
+| **AC8** 로컬 재현                       | README 절차대로 외부 계정·키 **0개**로 `docker compose up` + seed + FE 기동 → 골든 패스(예약→확정→상담기록→집계)를 끝까지 수행 가능. seed 계정(고객·상담사·관리자·가족) 제공.                                                                                                                                                                                   | 깨끗한 환경에서 README 1회 수동 워크스루 + `golden-path.e2e-spec.ts` green                                                                                                                                                           |
+| **AC9** 지표 연결 및 지표별 전환 (R5)   | 상담사가 기록 생성 시 `metricRefs[]`로 논의 지표를 연결 가능. `GET /admin/analytics`가 지표별 전환율을 집계 반환. seed 기록으로 기대값 일치 assert.                                                                                                                                                                                                             | 통합 테스트: `ConsultationRecordMetric` 저장 확인 + Analytics 지표별 전환 집계값 assert                                                                                                                                              |
+| **AC10** Waitlist 및 공석 알림 (R4)     | 가용 슬롯 없을 때 `POST /waitlist` 등록 `201`. 해당 상담사 `Booking` 취소 시 `WAITING` 1건이 `NOTIFIED`로 전이 + `SLOT_OPENED` Notification 1건 생성(FIFO).                                                                                                                                                                                                     | 통합 테스트: waitlist 등록 → 예약 취소 → NOTIFIED 전이 1건 + Notification 생성 1건 assert                                                                                                                                            |
+| **AC11** Analytics 범위 토글            | 상담사가 `GET /admin/analytics?scope=own`(기본)으로 본인 예약만 집계, `scope=all`로 전체 집계 확인. 관리자가 `?counselorId=<id>`로 특정 상담사 집계 조회.                                                                                                                                                                                                       | `analytics.scope.spec.ts`: 범위별 집계값 분리 assert                                                                                                                                                                                 |
+| **AC-N1** 자동 no-show 전이             | `sweepNoShows()` 호출 시 `slot.endAt < now`인 `CONFIRMED` 예약이 `NO_SHOW`로 전이된다. `COMPLETED` 예약은 변경되지 않는다(상태 가드).                                                                                                                                                                                                                           | 통합 테스트: CONFIRMED 예약의 슬롯 endAt을 과거로 설정 후 sweep 호출 → NO_SHOW assert. COMPLETED 예약은 불변 assert.                                                                                                                 |
+| **AC-N2** 상담사 수동 override          | 담당 상담사가 `PATCH /bookings/:id/attendance { status: 'COMPLETED' }` → CONFIRMED→COMPLETED 성공. 비담당 상담사는 `403`.                                                                                                                                                                                                                                       | 통합 테스트: 담당 성공 / 비담당 403 assert                                                                                                                                                                                           |
+| **AC-N3** sweep 멱등성                  | `sweepNoShows()` 2회 호출 시 결과 동일. NO_SHOW 예약이 재전이되지 않는다.                                                                                                                                                                                                                                                                                       | 통합 테스트: sweep 2회 실행 후 상태 카운트 동일 assert                                                                                                                                                                               |
+| **AC-N4** 양방향 override               | 담당 상담사는 attendance override로 `NO_SHOW ⇄ COMPLETED` 양방향 정정이 가능하다(자동 판정 번복 포함, 상담기록 존재 불요).                                                                                                                                                                                                                                      | 통합 테스트: NO_SHOW 예약에 PATCH /attendance `{ status: 'COMPLETED' }` → 200 + COMPLETED 전이 assert                                                                                                                                |
+| **AC-N5** COMPLETED 불가침              | no-show sweep이 COMPLETED 예약을 덮어쓰지 않는다. COMPLETED 예약이 CONFIRMED와 동일 endAt < now 조건이어도 무변.                                                                                                                                                                                                                                                | 통합 테스트: COMPLETED + CONFIRMED 예약이 동일 조건 → sweep 후 COMPLETED 불변, CONFIRMED만 NO_SHOW 전이 assert                                                                                                                       |
+| **AC-N6** NO_SHOW 일정 가시성           | `GET /counselor/schedule`이 `NO_SHOW` 예약을 (취소 제외) 본인 예약과 함께 반환해, 상담사가 미방문 상담도 콘솔에서 검토·필터할 수 있다.                                                                                                                                                                                                                          | `no-show-loop.spec.ts`: NO_SHOW 예약 생성 후 스케줄 응답에 해당 `bookingId`가 `status=NO_SHOW`로 포함됨 assert                                                                                                                       |
+| **AC-UX1** 콘솔 일정 필터·그룹핑        | 상담사 콘솔의 `/schedule`은 기간(오늘/예정/지난/전체)·예약상태(전체/예약중/예약완료/완료/노쇼) 2축 필터와 날짜별 그룹핑(헤더+건수)을 제공한다. `/availability`는 슬롯을 날짜별 그룹(예약가능/전체 카운트)으로 표시한다. 필터·그룹핑은 순수 함수로 분리되어 단위 테스트된다.                                                                                     | 단위 테스트(vitest): `shared/lib/date`(`matchesScope`·`groupByDay`·`formatDayHeader`) + `views/schedule/lib/filter`(`selectScheduleGroups`·`countByStatus`) + `views/availability/lib/grouping`(`selectSlotGroups`·`summarizeSlots`) |
+| **AC-W1** 공석 시 NOTIFIED 전이         | 취소 트랜잭션 내에서 해당 상담사의 첫 WAITING Waitlist 1건이 NOTIFIED로 전이된다. `offeredSlotId`와 `offerExpiresAt`이 설정된다.                                                                                                                                                                                                                                | 통합 테스트: waitlist 등록 → 예약 취소 → NOTIFIED 1건 + offeredSlotId 설정 assert                                                                                                                                                    |
+| **AC-W2** SLOT_OPENED 알림 생성         | NOTIFIED 전이 시 `type=SLOT_OPENED` Notification 1건이 원자적으로 생성된다.                                                                                                                                                                                                                                                                                     | 통합 테스트: Notification count +1 + waitlistId 연결 assert                                                                                                                                                                          |
+| **AC-W3** TTL 만료 → EXPIRED            | `offerExpiresAt` 경과 후 `sweepWaitlistOffers()` 호출 시 NOTIFIED 항목이 EXPIRED로 전이된다.                                                                                                                                                                                                                                                                    | 통합 테스트: offerExpiresAt을 과거로 설정 후 sweep → EXPIRED assert                                                                                                                                                                  |
+| **AC-W4** 예약 성공 → CONVERTED         | NOTIFIED 대기자가 offeredSlot으로 예약을 생성하면 Waitlist 항목이 CONVERTED로 전이된다.                                                                                                                                                                                                                                                                         | 통합 테스트: NOTIFIED 항목 → 해당 슬롯 예약 생성 → CONVERTED assert                                                                                                                                                                  |
+| **AC-W5** 전환율 계산                   | `waitlistConversionRate = CONVERTED / (CONVERTED + EXPIRED)`. WAITING·NOTIFIED는 분모 제외.                                                                                                                                                                                                                                                                     | 통합 테스트: CONVERTED N건 + EXPIRED M건 seed 후 analytics API 응답 비율 assert                                                                                                                                                      |
+| **AC-A1** 운영 지표 반환                | `GET /admin/analytics` 응답에 `booked / confirmed / completed / noShow / cancelled` 카운트 + `noShowRate` + `slotUtilization` + `waitlistConversionRate` 포함.                                                                                                                                                                                                  | 통합 테스트: seed 후 응답 필드 존재·계산값 일치 assert                                                                                                                                                                               |
+| **AC-A2** 신규 지표 범위 토글           | scope=own/all + counselorId 필터가 신규 ops 지표에도 적용된다.                                                                                                                                                                                                                                                                                                  | 통합 테스트: 범위별로 noShowRate 분리 집계 assert                                                                                                                                                                                    |
+| **AC-A3** noShowRate 정의               | `noShowRate = noShow / (noShow + completed)`. 단말 상태 케이스 기준. 분모 0이면 `0` 반환.                                                                                                                                                                                                                                                                       | 통합 테스트: N건 seed 후 기대값 일치 assert                                                                                                                                                                                          |
+| **AC-A4** slotUtilization 정의          | `slotUtilization = (confirmed + completed + noShow) / totalSlots`. 선점된 슬롯 비율. 분모 0이면 `null`.                                                                                                                                                                                                                                                         | 통합 테스트: slot N개, booking M건 seed 후 기대값 일치 assert                                                                                                                                                                        |
+| **AC-S1** 슬롯 단건·배치 생성           | 상담사가 `POST /counselors/slots [{ startAt, endAt }]`로 슬롯 생성 시 `201`. CUSTOMER 역할로 시도 시 `403`.                                                                                                                                                                                                                                                     | 통합 테스트: 단건 201 / 배치 201 / CUSTOMER 403 assert                                                                                                                                                                               |
+| **AC-S2** 배치 all-or-nothing           | 배치 내 하나라도 중첩이면 전체 거부(`409`). 일부만 저장되지 않는다.                                                                                                                                                                                                                                                                                             | 통합 테스트: 유효 슬롯 + 중첩 슬롯 배치 → 409 + 저장 0건 assert                                                                                                                                                                      |
+| **AC-S3** 중첩 슬롯 409 가드            | 동일 상담사의 기존 슬롯과 반개방 구간으로 겹치는 슬롯 생성 시 `409`. 정확히 뒤이은 슬롯(`endAt = nextStartAt`)은 허용.                                                                                                                                                                                                                                          | 통합 테스트: 겹침 409 / 맞닿음 201 assert                                                                                                                                                                                            |
+| **AC-S4** 활성 예약 있는 슬롯 삭제 거부 | PENDING 또는 CONFIRMED 예약이 있는 슬롯 `DELETE /slots/:id` 시도 시 `409`. 예약 없는 슬롯은 `200`.                                                                                                                                                                                                                                                              | 통합 테스트: 예약 있는 슬롯 409 / 없는 슬롯 200 assert                                                                                                                                                                               |
+| **AC-S5** 관리자 슬롯 관리              | 관리자가 존재하지 않는 상담사 ID로 슬롯 생성 시 `404`. 존재하는 상담사에 대해 생성·수정·삭제 가능.                                                                                                                                                                                                                                                              | 통합 테스트: 없는 counselorId 404 / 존재하는 counselorId 201 + PATCH 200 + DELETE 200 assert                                                                                                                                         |
+| **AC-C1** 챌린지 카탈로그 조회          | 상담사가 `GET /challenges`로 전체 챌린지 카탈로그를 조회한다(`linkedServiceType` 필터 없이 전체).                                                                                                                                                                                                                                                               | 통합 테스트: 시드 챌린지 4건이 카테고리·이름 정렬로 반환 assert                                                                                                                                                                      |
+| **AC-C2** 상담 기록 생성 시 등록        | 상담사가 `POST /consultation-records`에 `challengeId`를 포함하면 `recordId/customerId/counselorId`에 연결된 `ChallengeEnrollment` 정확히 1건이 동일 트랜잭션에서 생성된다. `challengeId` 없이 생성 시 등록은 발생하지 않는다(회귀 가드).                                                                                                                        | 통합 테스트(`challenge-enrollment.spec.ts`): challengeId 포함 → 등록 1건 / 미포함 → 등록 0건 assert                                                                                                                                  |
+| **AC-C3** 등록 소유권·유효성            | 타 상담사 담당 예약에 기록+등록 시도 시 `403`. 존재하지 않는 `challengeId` 지정 시 트랜잭션 진입 전 `404`(기록 미생성). 동일 record에 대한 2차 등록은 `@@unique([recordId])`로 차단된다.                                                                                                                                                                        | 통합 테스트: 비담당 403 / 잘못된 challengeId 404(기록 0건) / 중복 등록 위반 assert(2차 등록은 `prisma.challengeEnrollment.create` 직접 삽입으로 검증)                                                                                |
+| **AC-C4** 챌린지 등록 Analytics         | `GET /admin/analytics`가 `challengeEnrollments`(등록 수) + `challengeConversionRate`(구매→등록 전환율, `number\|null`)를 반환한다. 범위는 record JOIN의 counselorId로 산정되며, scope=own/all + counselorId 필터를 준수한다.                                                                                                                                    | 통합 테스트(`analytics-challenge.spec.ts`): 등록 수·전환율 일치 + disjoint 상담사 범위 분리 + record JOIN 스코핑 assert                                                                                                              |
+| **AC-C5** 전환율 0-vs-null 구분         | `challengeConversionRate`는 PURCHASED 기록이 0건이면 `null`(데이터 없음), PURCHASED 기록이 있으나 등록이 0건이면 `0`(전환 없음)을 반환해 두 경우를 구분한다.                                                                                                                                                                                                    | 통합 테스트: PURCHASED 0건 → null / PURCHASED 있고 등록 0건 → 0 assert                                                                                                                                                               |
+| **AC-P1** 브리핑 결정론 조립            | `GET /counselor/bookings/:bookingId/brief` 응답의 지표 목록이 `metricKey` asc 순서로, 과거 기록이 `createdAt` desc 순서로 정렬된다. ACCEPTED FamilyLink 맥락과 `concern`이 포함된다.                                                                                                                                                                            | 단위 테스트(정렬·필드 정확성) + 통합 테스트                                                                                                                                                                                          |
+| **AC-P2** 브리핑 소유권 403             | 타 상담사가 `GET /counselor/bookings/:bookingId/brief` 호출 시 `403`.                                                                                                                                                                                                                                                                                           | 통합 테스트(`assertBookingOwnedByCounselor` 재사용)                                                                                                                                                                                  |
+| **AC-P3** 골든패스 브리핑 단계          | 예약(+concern) → 브리핑 열람(`briefOpenedAt` 설정 + FALLBACK 가이던스 보장) → 확정 → createRecord → 챌린지 등록 → 집계 흐름이 end-to-end로 통과한다. createRecord는 AI 산출물을 만들지 않는다.                                                                                                                                                                   | `golden-path.e2e-spec.ts` 확장                                                                                                                                                                                                       |
+| **AC-P4** FALLBACK 가이던스 보장        | 브리핑 최초 열람 직후 `ConsultationBriefGuidance(bookingId-keyed, status=FALLBACK)` 1건이 존재한다. Ollama 미존재 환경에서도 성립한다.                                                                                                                                                                                                                          | E2E + 단위 테스트(TemplateGuidance 결정론)                                                                                                                                                                                           |
+| **AC-P5** Ollama 업그레이드 어댑터 경계 | `OllamaGuidance`의 payload/timeout/실패→폴백 회귀 경계만 단정한다. 출력 텍스트는 단정하지 않는다.                                                                                                                                                                                                                                                               | 어댑터 경계 단위 테스트                                                                                                                                                                                                              |
+| **AC-P6** 비블로킹                      | 브리핑 응답에 FALLBACK 가이던스가 존재하고, 스윕 호출 **전**에는 UPGRADED 행이 없다(업그레이드 작업이 request path에 없음을 단정).                                                                                                                                                                                                                              | 통합 테스트: 브리핑 열람 직후 UPGRADED=0 + sweepPendingUpgrades 호출 후 UPGRADED≥1 assert                                                                                                                                            |
+| **AC-P7** briefOpenRate 집계            | `GET /admin/analytics` 응답에 `briefOpenRate`(분모=CONFIRMED+COMPLETED+NO_SHOW)가 결정론 집계값으로 포함된다.                                                                                                                                                                                                                                                   | 통합 테스트: seed 후 기대값 일치 assert                                                                                                                                                                                              |
+| **AC-M1** 검사 지표 참조범위·상태       | 시드된 BioCom `TestResult`의 각 지표가 `referenceRange`와 `status(정상/주의/위험)`를 읽기 API로 노출한다.                                                                                                                                                                                                                                                       | 통합 테스트(`test-result-metrics.spec.ts`): 시드 지표가 referenceRange/status 노출 assert                                                                                                                                            |
+| **AC-M2** 결과 페이지 상태 배지         | 고객 결과 페이지가 지표별 참조범위 컬럼과 상태 배지(정상=teal/주의=amber/위험=red)를 렌더한다. 프론트 타입 경계(`TestMetric`)가 새 필드를 드롭하지 않는다.                                                                                                                                                                                                      | 프론트 단위 테스트(`toMetricList` 확장 형태 보존) + e2e 골든패스 상태 배지 가시성 assert                                                                                                                                             |
 
 > **AC1–AC11/AC-N/W/A/S/C/M 검증 디스플린**: 신규 챌린지·지표 테스트는 기존 테스트 스위트 위에 **추가**된다.
 > 어떤 assertion도 전체 스위트 개수를 하드코딩하지 않는다(green/red로 회귀를 판정).
@@ -267,13 +286,13 @@
 
 아래 항목은 MVP 범위에서 제외한다. 제외 근거는 각 항목에 명시한다.
 
-| 항목 | 제외 근거 | 표현 방식 |
-|------|----------|----------|
-| 실제 결제·커머스 연동 | 전환은 상담사 수동 outcome 입력으로 대체 가능. 외부 결제는 2주 과제 범위 초과. | — |
-| 실제 SMS·이메일 발송 | 알림의 본질(생성·추적·상태 전이)을 시뮬레이션으로 증명 가능. | `NotificationChannel` 인터페이스 + 어댑터 stub |
-| 검사결과 업로드·파싱 파이프라인 | seed JSON으로 데이터 존재 증명. 파이프라인은 별도 인프라(S3, 파서) 필요. | `UploadPipeline` 인터페이스 경계 |
-| reschedule(예약 변경) 플로우 | no-show의 근본 대응(R6)이나 MVP는 리마인더까지. 상태전이는 설계 문서에 명시. | Phase 2 설계 |
-| 비동기 상담 대안(FAQ·텍스트 Q&A) | 이탈의 더 깊은 대안(R7)이나 별도 채널 설계 필요. | Phase 2 설계 |
-| waitlist 자동 매칭·지능화 | 단순 FIFO waitlist(R4)가 MVP 충분. 자동 매칭(R8)은 별도 최적화 문제. | Phase 2 설계 |
-| 결과지 PDF 생성, 정산, 결제 수단 관리 | 핵심 상담 플로우와 독립적. | — |
-| 챌린지 등록 수정·상태 전이 UX(`updateRecord` 등록 편집, COMPLETED/DROPPED 전이) | 등록은 상담 기록 생성 시점 1회로 고정한다(FR13-2). `updateRecord`는 products/metrics를 전량 교체(delete-all + recreate)하므로 등록에 적용하면 `enrolledAt`·상태가 유실된다. 상태 전이 UX는 요구가 생길 때 재검토. | Phase 2 설계 (ADR 0007 Follow-ups) |
+| 항목                                                                            | 제외 근거                                                                                                                                                                                                         | 표현 방식                                      |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 실제 결제·커머스 연동                                                           | 전환은 상담사 수동 outcome 입력으로 대체 가능. 외부 결제는 2주 과제 범위 초과.                                                                                                                                    | —                                              |
+| 실제 SMS·이메일 발송                                                            | 알림의 본질(생성·추적·상태 전이)을 시뮬레이션으로 증명 가능.                                                                                                                                                      | `NotificationChannel` 인터페이스 + 어댑터 stub |
+| 검사결과 업로드·파싱 파이프라인                                                 | seed JSON으로 데이터 존재 증명. 파이프라인은 별도 인프라(S3, 파서) 필요.                                                                                                                                          | `UploadPipeline` 인터페이스 경계               |
+| reschedule(예약 변경) 플로우                                                    | no-show의 근본 대응(R6)이나 MVP는 리마인더까지. 상태전이는 설계 문서에 명시.                                                                                                                                      | Phase 2 설계                                   |
+| 비동기 상담 대안(FAQ·텍스트 Q&A)                                                | 이탈의 더 깊은 대안(R7)이나 별도 채널 설계 필요.                                                                                                                                                                  | Phase 2 설계                                   |
+| waitlist 자동 매칭·지능화                                                       | 단순 FIFO waitlist(R4)가 MVP 충분. 자동 매칭(R8)은 별도 최적화 문제.                                                                                                                                              | Phase 2 설계                                   |
+| 결과지 PDF 생성, 정산, 결제 수단 관리                                           | 핵심 상담 플로우와 독립적.                                                                                                                                                                                        | —                                              |
+| 챌린지 등록 수정·상태 전이 UX(`updateRecord` 등록 편집, COMPLETED/DROPPED 전이) | 등록은 상담 기록 생성 시점 1회로 고정한다(FR13-2). `updateRecord`는 products/metrics를 전량 교체(delete-all + recreate)하므로 등록에 적용하면 `enrolledAt`·상태가 유실된다. 상태 전이 UX는 요구가 생길 때 재검토. | Phase 2 설계 (ADR 0007 Follow-ups)             |

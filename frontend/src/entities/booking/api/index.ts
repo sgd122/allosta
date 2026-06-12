@@ -1,15 +1,12 @@
 import { pfetch } from '@/shared/api';
 import type { BookingStatus } from '@/shared/config';
-import type { Booking, Slot, MyBooking, CalendarDay } from '../types';
+import type { Booking, CreateBookingInput, Slot, MyBooking, CalendarDay } from '../types';
 
 export async function getSlots(counselorId: string): Promise<Slot[]> {
   return pfetch<Slot[]>(`counselors/${counselorId}/slots`);
 }
 
-export async function createBooking(input: {
-  slotId: string;
-  testResultId: string;
-}): Promise<Booking> {
+export async function createBooking(input: CreateBookingInput): Promise<Booking> {
   return pfetch<Booking>('bookings', {
     method: 'POST',
     body: JSON.stringify(input),

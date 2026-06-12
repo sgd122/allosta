@@ -24,6 +24,7 @@ import { formatPercent } from '@/shared/lib/format';
 import { OpsRateCard } from './OpsRateCard';
 import { ChallengeConversionCard } from './ChallengeConversionCard';
 import { BookingFunnelCard } from './BookingFunnelCard';
+import { BriefProductivityCard } from './BriefProductivityCard';
 import { RecordsList } from './RecordsList';
 import { DrilldownDialog } from './DrilldownDialog';
 
@@ -108,6 +109,8 @@ export default function AdminDashboardPage() {
           </Flex>
 
           <BookingFunnelCard funnel={data.funnel} />
+
+          <BriefProductivityCard briefOpenRate={data.briefOpenRate} />
 
           <Flex gap="4" direction={{ initial: 'column', sm: 'row' }}>
             <Card size="3" className="rise flex-1" style={{ animationDelay: '60ms' }}>

@@ -1,11 +1,11 @@
-import type { SubjectType, Outcome } from '@/shared/config';
+import type { Outcome, SubjectType } from "@/shared/config";
 
 export type ConsultationActionType =
-  | 'METRIC_EXPLAINED'
-  | 'DIET_GUIDANCE'
-  | 'SUPPLEMENT_GUIDANCE'
-  | 'RETEST_GUIDANCE'
-  | 'LIFESTYLE_GUIDANCE';
+  | "METRIC_EXPLAINED"
+  | "DIET_GUIDANCE"
+  | "SUPPLEMENT_GUIDANCE"
+  | "RETEST_GUIDANCE"
+  | "LIFESTYLE_GUIDANCE";
 
 export interface ConsultationRecordInput {
   bookingId: string;
