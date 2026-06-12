@@ -66,27 +66,6 @@ describe('AC7 / AC7b authorization (role + ownership)', () => {
       }
     });
 
-    // ── GET /waitlist (customer's own waitlist) ───────────────────────────────
-    it('returns 403 when a COUNSELOR token requests GET /waitlist', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/waitlist')
-        .set('Authorization', `Bearer ${islandA.counselorToken}`);
-
-      expect(res.status).toBe(403);
-    });
-
-    it('returns 200 with own waitlist entries when a CUSTOMER token requests GET /waitlist', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/waitlist')
-        .set('Authorization', `Bearer ${islandA.customerToken}`);
-
-      // No waitlist entries seeded for this island, so the array is empty — but
-      // the shape (array) and status (200) confirm the endpoint is reachable and
-      // scoped to the calling customer.
-      expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
-    });
-
     it('returns 403 when a CUSTOMER token requests GET /admin/analytics', async () => {
       const res = await request(app.getHttpServer())
         .get('/admin/analytics')

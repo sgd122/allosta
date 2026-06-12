@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  BookingStatus,
-  Outcome,
-  Prisma,
-  WaitlistStatus,
-} from '@prisma/client';
+import { BookingStatus, Outcome, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AnalyticsDashboard,
@@ -29,7 +24,6 @@ export class AnalyticsService {
       metricConversion,
       funnel,
       slotUtilization,
-      waitlistConversionRate,
       challengeEnrollments,
       challengeConversionRate,
       briefOpenRate,
@@ -40,7 +34,6 @@ export class AnalyticsService {
       this.aggregateMetricConversion(counselorId),
       this.groupBookingFunnel(counselorId),
       this.computeSlotUtilization(counselorId),
-      this.computeWaitlistConversion(counselorId),
       this.countChallengeEnrollments(counselorId),
       this.computeChallengeConversion(counselorId),
       this.computeBriefOpenRate(counselorId),
@@ -64,7 +57,6 @@ export class AnalyticsService {
       funnel,
       noShowRate,
       slotUtilization,
-      waitlistConversionRate,
       challengeEnrollments,
       challengeConversionRate,
       briefOpenRate,
@@ -264,30 +256,6 @@ export class AnalyticsService {
     ]);
 
     return denominator > 0 ? numerator / denominator : 0;
-  }
-
-  /**
-   * CONVERTED / (CONVERTED + EXPIRED) — excludes live NOTIFIED/WAITING rows
-   * (AC-A4). Zero-denominator → 0.
-   */
-  private async computeWaitlistConversion(
-    counselorId?: string,
-  ): Promise<number> {
-    const where: Prisma.WaitlistWhereInput = counselorId
-      ? { counselorId }
-      : {};
-
-    const [converted, expired] = await Promise.all([
-      this.prisma.waitlist.count({
-        where: { ...where, status: WaitlistStatus.CONVERTED },
-      }),
-      this.prisma.waitlist.count({
-        where: { ...where, status: WaitlistStatus.EXPIRED },
-      }),
-    ]);
-
-    const denominator = converted + expired;
-    return denominator > 0 ? converted / denominator : 0;
   }
 
   private async aggregateMetricConversion(

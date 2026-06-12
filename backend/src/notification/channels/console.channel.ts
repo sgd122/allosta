@@ -19,7 +19,7 @@ export class ConsoleChannelAdapter implements NotificationChannelAdapter {
   async send(notification: NotificationPayload): Promise<void> {
     const ref = notification.bookingId
       ? `booking:${notification.bookingId}`
-      : `waitlist:${notification.waitlistId ?? 'n/a'}`;
+      : 'booking:n/a';
 
     const scheduled = notification.scheduledAt
       ? ` scheduled=${notification.scheduledAt.toISOString()}`

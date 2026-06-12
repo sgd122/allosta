@@ -49,11 +49,6 @@ export interface AnalyticsDashboard {
    */
   slotUtilization: number;
   /**
-   * CONVERTED / (CONVERTED + EXPIRED) — excludes live offers
-   * (NOTIFIED/WAITING) (AC-A4). Zero when denominator is zero.
-   */
-  waitlistConversionRate: number;
-  /**
    * Count of challenge enrollments, scoped through the linked record's
    * counselor (AC5). Counselor scope uses the RECORD's counselorId via JOIN.
    */

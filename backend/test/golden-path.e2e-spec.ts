@@ -1,12 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import {
-  BookingStatus,
-  BriefGuidanceStatus,
-  NotificationType,
-  Outcome,
-  SubjectType,
-  WaitlistStatus,
-} from '@prisma/client';
+import { BookingStatus, BriefGuidanceStatus, Outcome } from '@prisma/client';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
@@ -17,15 +10,15 @@ import {
 } from './helpers/test-app';
 
 /**
- * Golden path (AC1/AC4/AC6/AC9) plus AC10 waitlist promotion.
+ * Golden path (AC1/AC4/AC6/AC9) plus cancellation freeing a slot (AC10).
  *
  * One end-to-end flow over HTTP (supertest, no browser):
  *   list slots -> book -> slot disappears -> counselor sees it ->
  *   counselor records (PURCHASED + product + metric) -> admin analytics
- *   reflects the conversion/product/metric. Then a waitlist + cancellation
- *   proves FIFO promotion + SLOT_OPENED notification.
+ *   reflects the conversion/product/metric. Then a cancellation proves the
+ *   slot returns to availability (no promotion).
  */
-describe('Golden path (AC1/AC4/AC6/AC9) + AC10 waitlist', () => {
+describe('Golden path (AC1/AC4/AC6/AC9) + cancellation', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let seeded: SeededData;
@@ -222,11 +215,11 @@ describe('Golden path (AC1/AC4/AC6/AC9) + AC10 waitlist', () => {
     expect(analytics.body.briefOpenRate).toBeGreaterThan(0);
   });
 
-  it('promotes a waiting customer to NOTIFIED and emits SLOT_OPENED when a booking is cancelled (AC10)', async () => {
+  it('frees the slot back into availability when a booking is cancelled (AC10)', async () => {
     const counselorId = seeded.counselorId;
     const slotToCancel = seeded.slotIds[1];
 
-    // Customer books the second slot (will be cancelled to free a slot).
+    // Customer books the second slot.
     const booking = await request(app.getHttpServer())
       .post('/bookings')
       .set('Authorization', `Bearer ${seeded.customerToken}`)
@@ -237,37 +230,30 @@ describe('Golden path (AC1/AC4/AC6/AC9) + AC10 waitlist', () => {
     expect(booking.status).toBe(201);
     const bookingId = booking.body.id as string;
 
-    // Customer joins the counselor's waitlist (AC10 register).
-    const waitlist = await request(app.getHttpServer())
-      .post('/waitlist')
-      .set('Authorization', `Bearer ${seeded.customerToken}`)
-      .send({
-        counselorId,
-        subjectType: SubjectType.CUSTOMER,
-        subjectId: seeded.customerId,
-      });
-    expect(waitlist.status).toBe(201);
-    expect(waitlist.body.status).toBe(WaitlistStatus.WAITING);
-    const waitlistId = waitlist.body.id as string;
+    // The booked slot is no longer derived-available (PENDING hides it).
+    const slotsBooked = await request(app.getHttpServer())
+      .get(`/counselors/${counselorId}/slots`)
+      .set('Authorization', `Bearer ${seeded.customerToken}`);
+    expect(slotsBooked.status).toBe(200);
+    expect(slotsBooked.body.map((s: { id: string }) => s.id)).not.toContain(
+      slotToCancel,
+    );
 
-    // Cancel the confirmed booking -> FIFO promotion fires.
+    // Cancel the booking — succeeds with no waiter present (no promotion).
     const cancel = await request(app.getHttpServer())
       .delete(`/bookings/${bookingId}`)
       .set('Authorization', `Bearer ${seeded.customerToken}`);
     expect(cancel.status).toBe(200);
     expect(cancel.body.status).toBe('CANCELLED');
 
-    // The waiting entry flipped to NOTIFIED.
-    const promoted = await prisma.waitlist.findUnique({
-      where: { id: waitlistId },
-      select: { status: true },
-    });
-    expect(promoted?.status).toBe(WaitlistStatus.NOTIFIED);
-
-    // A SLOT_OPENED notification row exists for that waitlist entry.
-    const slotOpened = await prisma.notification.findFirst({
-      where: { waitlistId, type: NotificationType.SLOT_OPENED },
-    });
-    expect(slotOpened).not.toBeNull();
+    // The cancelled booking leaves the active-unique index, so the slot is
+    // derived-available again.
+    const slotsFreed = await request(app.getHttpServer())
+      .get(`/counselors/${counselorId}/slots`)
+      .set('Authorization', `Bearer ${seeded.customerToken}`);
+    expect(slotsFreed.status).toBe(200);
+    expect(slotsFreed.body.map((s: { id: string }) => s.id)).toContain(
+      slotToCancel,
+    );
   });
 });

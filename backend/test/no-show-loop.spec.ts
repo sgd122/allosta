@@ -44,9 +44,20 @@ describe('No-show loop (AC-N2, AC-N5, AC-N6)', () => {
   });
 
   // ── Helper: create a past slot (endAt < now) for an island ──────────────
+  // Each call allocates a DISTINCT, non-overlapping 1h band stepping further into
+  // the past. This keeps every slot strictly past (endAt < now) while ensuring
+  // two past bookings for the SAME customer never share a time window — otherwise
+  // the customer-no-overlap GiST constraint (ADR 0015) would (correctly) reject
+  // the second ACTIVE booking these no-show fixtures create for one customer.
+  let pastSlotSeq = 0;
 
   async function createPastSlot(counselorId: string): Promise<string> {
-    const endAt = new Date(Date.now() - 60_000); // 1 min ago
+    pastSlotSeq += 1;
+    // Each band is a 1h slot separated by a 1h gap (2h stride) so adjacent bands
+    // can never touch — even with a few ms of Date.now() drift between calls —
+    // and thus never overlap. Frozen base avoids drift between the two now() reads.
+    const base = Date.now() - 60_000;
+    const endAt = new Date(base - pastSlotSeq * 2 * 60 * 60 * 1000);
     const startAt = new Date(endAt.getTime() - 60 * 60 * 1000);
     const slot = await prisma.availabilitySlot.create({
       data: { counselorId, startAt, endAt, isOpen: true },
@@ -59,6 +70,11 @@ describe('No-show loop (AC-N2, AC-N5, AC-N6)', () => {
     customerId: string,
     status: BookingStatus,
   ): Promise<string> {
+    // Mirror the denormalized slot window the service sets (ADR 0015).
+    const slot = await prisma.availabilitySlot.findUniqueOrThrow({
+      where: { id: slotId },
+      select: { startAt: true, endAt: true },
+    });
     const booking = await prisma.booking.create({
       data: {
         slotId,
@@ -66,6 +82,8 @@ describe('No-show loop (AC-N2, AC-N5, AC-N6)', () => {
         subjectType: SubjectType.CUSTOMER,
         subjectId: customerId,
         status,
+        slotStartAt: slot.startAt,
+        slotEndAt: slot.endAt,
       },
     });
     return booking.id;

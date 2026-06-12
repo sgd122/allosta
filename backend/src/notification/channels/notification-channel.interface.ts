@@ -8,7 +8,6 @@ export type NotificationPayload = {
   id: string;
   type: NotificationType;
   bookingId?: string;
-  waitlistId?: string;
   scheduledAt?: Date;
 };
 

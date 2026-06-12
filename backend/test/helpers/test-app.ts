@@ -214,30 +214,21 @@ export async function cleanupSeeded(
   prisma: PrismaService,
   seeded: SeededData,
 ): Promise<void> {
-  // Notifications can reference bookings/waitlists with onDelete: SetNull, so
-  // they would otherwise linger — clear the ones tied to this island first.
+  // Notifications can reference bookings with onDelete: SetNull, so they would
+  // otherwise linger — clear the ones tied to this island first.
   const bookings = await prisma.booking.findMany({
     where: { customerId: seeded.customerId },
     select: { id: true },
   });
   const bookingIds = bookings.map((b) => b.id);
 
-  const waitlists = await prisma.waitlist.findMany({
-    where: { customerId: seeded.customerId },
-    select: { id: true },
-  });
-  const waitlistIds = waitlists.map((w) => w.id);
+  if (bookingIds.length) {
+    await prisma.notification.deleteMany({
+      where: { bookingId: { in: bookingIds } },
+    });
+  }
 
-  await prisma.notification.deleteMany({
-    where: {
-      OR: [
-        bookingIds.length ? { bookingId: { in: bookingIds } } : undefined,
-        waitlistIds.length ? { waitlistId: { in: waitlistIds } } : undefined,
-      ].filter(Boolean) as object[],
-    },
-  });
-
-  // Deleting the Customer cascades Booking, Waitlist, FamilyLink (inviter/invitee),
+  // Deleting the Customer cascades Booking, FamilyLink (inviter/invitee),
   // ConsultationRecord (via booking), and their join rows.
   await prisma.customer.deleteMany({ where: { id: seeded.customerId } });
   await prisma.user.deleteMany({ where: { id: seeded.customerUserId } });

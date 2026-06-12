@@ -52,7 +52,7 @@ export function CompleteBookingDialog({ intent, onClose, onCompleted }: Complete
     },
     onSuccess: async () => {
       if (!intent) return;
-      await invalidateAfterBookingCreated(queryClient, { source: intent.source });
+      await invalidateAfterBookingCreated(queryClient);
       setSelectedReportKey(null);
       setConcern('');
       setSubmitError(null);

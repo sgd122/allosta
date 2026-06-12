@@ -81,7 +81,7 @@ export class BookingController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Cancel a booking and promote the waitlist (AC10)' })
+  @ApiOperation({ summary: 'Cancel a booking, freeing the slot (AC10)' })
   cancel(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,

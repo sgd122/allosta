@@ -23,7 +23,6 @@ export interface Analytics {
   funnel: BookingFunnel;
   noShowRate: number;
   slotUtilization: number;
-  waitlistConversionRate: number;
   challengeEnrollments: number;
   challengeConversionRate: number | null;
   /**

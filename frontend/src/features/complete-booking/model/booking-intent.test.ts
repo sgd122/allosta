@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   bookingInputForReport,
   bookingIntentFromAggregatedSlot,
-  bookingIntentFromWaitlistOffer,
 } from './booking-intent';
 import type { TestReport } from '@/entities/test-result';
 
@@ -33,18 +32,17 @@ const report: TestReport = {
 };
 
 describe('booking intent', () => {
-  it('uses the selected report representative id for a waitlist offer booking', () => {
-    const intent = bookingIntentFromWaitlistOffer({
-      waitlistId: 'wait-1',
-      slot: {
-        id: 'slot-from-offer',
-        startAt: '2026-06-10T09:00:00.000Z',
-        endAt: '2026-06-10T10:00:00.000Z',
-      },
+  it('uses the selected report representative id for a calendar-slot booking', () => {
+    const intent = bookingIntentFromAggregatedSlot({
+      slotId: 'slot-from-calendar',
+      startAt: '2026-06-10T09:00:00.000Z',
+      endAt: '2026-06-10T10:00:00.000Z',
+      availableCount: 1,
+      counselorId: 'counselor-1',
     });
 
     expect(bookingInputForReport(intent, report)).toEqual({
-      slotId: 'slot-from-offer',
+      slotId: 'slot-from-calendar',
       testResultId: 'latest-result',
     });
   });

@@ -23,5 +23,4 @@ export {
   invalidateAfterBookingCreated,
   invalidateAfterBookingCancelled,
   invalidateAfterBookingUpdatedByCounselor,
-  type BookingCreatedSource,
 } from './api/invalidation';

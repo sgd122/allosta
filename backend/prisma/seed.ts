@@ -44,7 +44,6 @@ async function main(): Promise<void> {
   await prisma.consultationRecordProduct.deleteMany();
   await prisma.consultationRecord.deleteMany();
   await prisma.notification.deleteMany();
-  await prisma.waitlist.deleteMany();
   await prisma.booking.deleteMany();
   await prisma.availabilitySlot.deleteMany();
   await prisma.testResult.deleteMany();
@@ -382,6 +381,9 @@ async function main(): Promise<void> {
       subjectId: customer.id,
       testResultId: metabolicResult.id,
       status: BookingStatus.COMPLETED,
+      // Denormalized slot window for the customer-no-overlap constraint (ADR 0015).
+      slotStartAt: demoSlot.startAt,
+      slotEndAt: demoSlot.endAt,
     },
   });
   const demoRecord = await prisma.consultationRecord.create({

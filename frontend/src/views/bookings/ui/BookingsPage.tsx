@@ -5,18 +5,15 @@ import { Box, Callout, Card, Flex, Spinner, Text } from '@radix-ui/themes';
 import { ExclamationTriangleIcon } from '@radix-ui/react-icons';
 import { useMyBookings } from '@/entities/booking';
 import { useFamilyMembers } from '@/entities/family-link';
-import { useMyWaitlist } from '@/entities/waitlist';
 import { useTestResults, createReportCatalog } from '@/entities/test-result';
 import { toFriendlyMessage } from '@/shared/api';
-import { Eyebrow, PageHeader } from '@/shared/ui';
-import { CompleteBookingDialog, bookingIntentFromWaitlistOffer, type BookingIntent } from '@/features/complete-booking';
+import { PageHeader } from '@/shared/ui';
+import { CompleteBookingDialog, type BookingIntent } from '@/features/complete-booking';
 import { BookingCard } from './BookingCard';
-import { WaitlistOfferCard } from './WaitlistOfferCard';
 
 export default function BookingsPage() {
   const [activeIntent, setActiveIntent] = useState<BookingIntent | null>(null);
   const { data, isLoading, isError, error } = useMyBookings();
-  const { data: waitlistData } = useMyWaitlist();
   const { data: testResults } = useTestResults();
   const { data: familyMembers } = useFamilyMembers();
 
@@ -27,9 +24,6 @@ export default function BookingsPage() {
   );
 
   const bookings = data ?? [];
-  const activeOffers = (waitlistData ?? []).filter(
-    (e) => e.status === 'NOTIFIED' && e.offeredSlot != null,
-  );
 
   return (
     <Box>
@@ -38,23 +32,6 @@ export default function BookingsPage() {
         title="내 예약"
         description={`총 예약 ${bookings.length}건`}
       />
-
-      {activeOffers.length > 0 && (
-        <Box mb="6">
-          <Eyebrow tone="amber" className="mb-3 tracking-[0.12em]">대기 알림</Eyebrow>
-          <Flex direction="column" gap="3">
-            {activeOffers.map((entry) => (
-              <WaitlistOfferCard
-                key={entry.id}
-                entry={entry}
-                onBookOffer={(offer) =>
-                  setActiveIntent(bookingIntentFromWaitlistOffer({ waitlistId: offer.id, slot: offer.offeredSlot }))
-                }
-              />
-            ))}
-          </Flex>
-        </Box>
-      )}
 
       {isLoading && (
         <Flex justify="center" py="8">

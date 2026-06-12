@@ -16,11 +16,17 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OwnershipService } from '../common/ownership/ownership.service';
-import { WaitlistService } from '../waitlist/waitlist.service';
 
 const DEFAULT_REMINDER_LEAD_MINUTES = 30;
 const MS_PER_MINUTE = 60_000;
 const UNIQUE_VIOLATION_CODE = 'P2002';
+// Postgres SQLSTATE for an exclusion_constraint violation (the GiST EXCLUDE
+// `booking_customer_no_overlap`, ADR 0015). Prisma does not have a dedicated
+// `code` for this — it surfaces as PrismaClientUnknownRequestError whose `message`
+// carries the raw SQLSTATE and constraint name (verified empirically, see ADR 0015).
+const EXCLUSION_VIOLATION_SQLSTATE = '23P01';
+const CUSTOMER_OVERLAP_CONSTRAINT = 'booking_customer_no_overlap';
+const CUSTOMER_OVERLAP_MESSAGE = '이미 같은 시간대에 예약이 있습니다.';
 
 /**
  * Shape returned by GET /bookings — the customer's own bookings with the
@@ -38,14 +44,13 @@ export interface MyBookingDto {
 
 /**
  * Booking domain: confirmation, concurrency-safe creation (AC2), cancellation
- * with FIFO waitlist promotion (AC10), and ops lifecycle sweeps (AC-N3/N4/N6).
+ * (frees the slot, no promotion), and ops lifecycle sweeps (AC-N3/N4/N6).
  */
 @Injectable()
 export class BookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
-    private readonly waitlist: WaitlistService,
     private readonly config: ConfigService,
   ) {}
 
@@ -55,8 +60,7 @@ export class BookingService {
    * Concurrency is handled DB-side via the partial unique index
    * `booking_slot_active_unique`. Insert-first / catch-P2002 pattern avoids
    * TOCTOU. Confirmation + reminder notifications are created in the same
-   * transaction. Any NOTIFIED waitlist row for this customer+counselor+slot is
-   * atomically converted to CONVERTED (AC-W4).
+   * transaction.
    */
   async create(
     customerId: string,
@@ -84,7 +88,13 @@ export class BookingService {
 
     const slot = await this.prisma.availabilitySlot.findUnique({
       where: { id: slotId },
-      select: { id: true, isOpen: true, startAt: true, counselorId: true },
+      select: {
+        id: true,
+        isOpen: true,
+        startAt: true,
+        endAt: true,
+        counselorId: true,
+      },
     });
 
     if (!slot) {
@@ -92,6 +102,26 @@ export class BookingService {
     }
     if (!slot.isOpen) {
       throw new ConflictException('Slot is not open for booking');
+    }
+
+    // Customer self-overlap pre-check (UX only — the real guarantee under
+    // concurrency is the `booking_customer_no_overlap` GiST EXCLUDE constraint,
+    // ADR 0015). Reject if this customer already holds an ACTIVE booking whose
+    // window overlaps [slot.startAt, slot.endAt). Overlap test on half-open
+    // ranges: existing.slotStartAt < newEnd AND existing.slotEndAt > newStart.
+    const overlapping = await this.prisma.booking.findFirst({
+      where: {
+        customerId,
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+        },
+        slotStartAt: { lt: slot.endAt },
+        slotEndAt: { gt: slot.startAt },
+      },
+      select: { id: true },
+    });
+    if (overlapping) {
+      throw new ConflictException(CUSTOMER_OVERLAP_MESSAGE);
     }
 
     const reminderAt = new Date(
@@ -108,6 +138,8 @@ export class BookingService {
             subjectId,
             testResultId,
             status: BookingStatus.PENDING,
+            slotStartAt: slot.startAt,
+            slotEndAt: slot.endAt,
             ...(concern !== undefined && { concern }),
           },
         });
@@ -132,16 +164,6 @@ export class BookingService {
           },
         });
 
-        // Convert any NOTIFIED waitlist entry that matches this booking
-        // (AC-W4). No-op if the customer had no offer or the offer was for a
-        // different slot. Atomic with the booking insert.
-        await this.waitlist.convertOnBooking(
-          tx,
-          customerId,
-          slot.counselorId,
-          slotId,
-        );
-
         return booking;
       });
     } catch (error: unknown) {
@@ -151,14 +173,44 @@ export class BookingService {
       ) {
         throw new ConflictException('Slot is already booked');
       }
+      // The customer self-overlap GiST EXCLUDE constraint surfaces as a raw
+      // Postgres exclusion_violation (SQLSTATE 23P01). Prisma has no dedicated
+      // `code` for it: empirically it arrives as PrismaClientUnknownRequestError
+      // whose `message` contains both '23P01' and the constraint name. Match on
+      // either so the mapping is resilient to Prisma's exact error class.
+      if (this.isCustomerOverlapViolation(error)) {
+        throw new ConflictException(CUSTOMER_OVERLAP_MESSAGE);
+      }
       throw error;
     }
   }
 
   /**
-   * Cancels a booking owned by the current customer (sets CANCELLED) and, in
-   * the same transaction, promotes the oldest waiting customer for that
-   * counselor (AC10). Atomic: cancel + promote + SLOT_OPENED notification.
+   * True when `error` is the Postgres exclusion_violation (23P01) raised by the
+   * `booking_customer_no_overlap` GiST constraint (ADR 0015). Inspects the raw
+   * message because Prisma surfaces 23P01 as an UnknownRequestError without a
+   * structured `code`.
+   */
+  private isCustomerOverlapViolation(error: unknown): boolean {
+    const message =
+      error instanceof Prisma.PrismaClientUnknownRequestError ||
+      error instanceof Prisma.PrismaClientKnownRequestError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : '';
+    return (
+      message.includes(EXCLUSION_VIOLATION_SQLSTATE) ||
+      message.includes(CUSTOMER_OVERLAP_CONSTRAINT)
+    );
+  }
+
+  /**
+   * Cancels a booking owned by the current customer (sets CANCELLED).
+   *
+   * Cancelling frees the slot: a CANCELLED booking leaves the
+   * `booking_slot_active_unique` partial index, so the slot becomes
+   * derived-available again. There is no waitlist promotion.
    */
   async cancel(customerId: string, bookingId: string): Promise<Booking> {
     const booking = await this.prisma.booking.findUnique({
@@ -168,7 +220,6 @@ export class BookingService {
         slotId: true,
         customerId: true,
         status: true,
-        slot: { select: { counselorId: true } },
       },
     });
 
@@ -181,8 +232,8 @@ export class BookingService {
       );
     }
     // Only an ACTIVE booking can be cancelled. Re-cancelling a CANCELLED or
-    // reverting a COMPLETED booking would corrupt status history AND fire a
-    // spurious waitlist promotion (no slot actually frees) — reject with 409.
+    // reverting a COMPLETED/NO_SHOW booking would corrupt status history —
+    // reject with 409. A normal cancel of a PENDING/CONFIRMED booking succeeds.
     if (
       booking.status !== BookingStatus.PENDING &&
       booking.status !== BookingStatus.CONFIRMED
@@ -190,21 +241,9 @@ export class BookingService {
       throw new ConflictException('Only an active booking can be cancelled');
     }
 
-    const counselorId = booking.slot.counselorId;
-
-    return this.prisma.$transaction(async (tx) => {
-      const cancelled = await tx.booking.update({
-        where: { id: bookingId },
-        data: { status: BookingStatus.CANCELLED },
-      });
-
-      await this.waitlist.promoteOnCancellation(
-        counselorId,
-        cancelled.slotId,
-        tx,
-      );
-
-      return cancelled;
+    return this.prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: BookingStatus.CANCELLED },
     });
   }
 

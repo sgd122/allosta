@@ -14,8 +14,8 @@ import { NotificationController } from './notification.controller';
  * customer-facing GET /notifications + admin POST /admin/notifications/dispatch
  * endpoints.
  *
- * Does NOT import BookingModule or WaitlistModule. Those modules INSERT
- * Notification rows as status=PENDING; this module is the consumer only.
+ * Does NOT import BookingModule. That module INSERTs Notification rows as
+ * status=PENDING; this module is the consumer only.
  *
  * PrismaService is provided by the global PrismaModule.
  */

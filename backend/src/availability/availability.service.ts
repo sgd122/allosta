@@ -256,8 +256,6 @@ export class AvailabilityService {
    * Deletes a slot (AC-S1/S4).
    *
    * Blocked with 409 when an active (PENDING/CONFIRMED) booking exists.
-   * Waitlist rows with offeredSlotId pointing to this slot use onDelete:SetNull
-   * and are NOT blocked — deletion nullifies their FK (advisory offer lapses).
    *
    * @param slotId - The slot to delete.
    * @param requestingCounselorId - If provided (counselor route), ownership is

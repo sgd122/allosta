@@ -20,7 +20,7 @@
 - **단일 경로 alias**: `tsconfig.json`의 `@/* → ./src/*` 하나로 라우팅·FSD 레이어를 모두 커버.
 - **레이어**: `app(라우팅) → views → widgets → features → entities → shared`. 상위 레이어는 자신보다 하위 레이어만 import 한다.
 - **Public API 배럴**: `entities`/`features`/`widgets`/`views`의 각 슬라이스는 `index.ts`로 공개 API를 노출하고, 슬라이스 간 import는 반드시 `index.ts`만 경유(내부 경로 deep-import 금지).
-- **도메인 슬라이싱**: `lib/types.ts`·`lib/api-client.ts`를 해체해 12개 entity(session·booking·availability·schedule·waitlist·test-result·consultation-record·analytics·family-link·notification·product·challenge)의 `model`/`api`/`ui`로 분배. 교차 원시 union(`Role`·`Outcome`·`BookingStatus` 등)은 `shared/config`로, HTTP 코어·`toFriendlyMessage`는 `shared/api`, 쿠키/토큰(server-only)은 `shared/auth`, 포맷터는 `shared/lib/format`로 이동.
+- **도메인 슬라이싱**: `lib/types.ts`·`lib/api-client.ts`를 해체해 11개 entity(session·booking·availability·schedule·test-result·consultation-record·analytics·family-link·notification·product·challenge)의 `model`/`api`/`ui`로 분배. 교차 원시 union(`Role`·`Outcome`·`BookingStatus` 등)은 `shared/config`로, HTTP 코어·`toFriendlyMessage`는 `shared/api`, 쿠키/토큰(server-only)은 `shared/auth`, 포맷터는 `shared/lib/format`로 이동.
 
 ### FSD "pages" → `views` 명명
 
