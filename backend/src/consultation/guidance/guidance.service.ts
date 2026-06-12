@@ -31,6 +31,14 @@ export interface GuidanceResult {
 export class GuidanceService {
   private readonly logger = new Logger(GuidanceService.name);
 
+  /**
+   * Re-entrancy guard for the OpsScheduler sweep. `@Interval` fires on a fixed
+   * setInterval timer and does NOT await the previous run, so a slow local-LLM
+   * sweep can overlap the next tick and re-issue Ollama requests for the same
+   * FALLBACK bookings. This single-instance flag drops overlapping sweeps.
+   */
+  private isSweeping = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly template: TemplateGuidanceGenerator,
@@ -93,53 +101,64 @@ export class GuidanceService {
    * by bookingId. Returns the number of rows upgraded.
    */
   async sweepPendingUpgrades(): Promise<number> {
-    const available = await this.ollama.available();
-    if (!available) {
+    // Drop overlapping sweeps: the @Interval timer does not await the prior run.
+    if (this.isSweeping) {
       return 0;
     }
-
-    const pending = await this.prisma.consultationBriefGuidance.findMany({
-      where: { status: BriefGuidanceStatus.FALLBACK },
-      select: { bookingId: true },
-    });
-    if (pending.length === 0) {
-      return 0;
-    }
-
-    let upgraded = 0;
-    for (const { bookingId } of pending) {
-      const input = await this.buildInput(bookingId);
-      if (!input) {
-        continue;
+    this.isSweeping = true;
+    try {
+      const available = await this.ollama.available();
+      if (!available) {
+        return 0;
       }
 
-      try {
-        const content = await this.ollama.generate(input);
-        // Re-scope the write to FALLBACK rows so a concurrent open or a prior
-        // upgrade is never overwritten (no downgrade, structurally).
-        const result = await this.prisma.consultationBriefGuidance.updateMany({
-          where: { bookingId, status: BriefGuidanceStatus.FALLBACK },
-          data: {
-            status: BriefGuidanceStatus.UPGRADED,
-            model: this.ollama.model,
-            content,
-          },
-        });
-        upgraded += result.count;
-      } catch (error: unknown) {
-        // Fail-soft: leave the row at FALLBACK so the next sweep retries.
-        this.logger.warn(
-          `Guidance upgrade failed for booking ${bookingId}: ${this.errorMessage(error)}`,
+      const pending = await this.prisma.consultationBriefGuidance.findMany({
+        where: { status: BriefGuidanceStatus.FALLBACK },
+        select: { bookingId: true },
+      });
+      if (pending.length === 0) {
+        return 0;
+      }
+
+      let upgraded = 0;
+      for (const { bookingId } of pending) {
+        const input = await this.buildInput(bookingId);
+        if (!input) {
+          continue;
+        }
+
+        try {
+          const content = await this.ollama.generate(input);
+          // Re-scope the write to FALLBACK rows so a concurrent open or a prior
+          // upgrade is never overwritten (no downgrade, structurally).
+          const result = await this.prisma.consultationBriefGuidance.updateMany(
+            {
+              where: { bookingId, status: BriefGuidanceStatus.FALLBACK },
+              data: {
+                status: BriefGuidanceStatus.UPGRADED,
+                model: this.ollama.model,
+                content,
+              },
+            },
+          );
+          upgraded += result.count;
+        } catch (error: unknown) {
+          // Fail-soft: leave the row at FALLBACK so the next sweep retries.
+          this.logger.warn(
+            `Guidance upgrade failed for booking ${bookingId}: ${this.errorMessage(error)}`,
+          );
+        }
+      }
+
+      if (upgraded > 0) {
+        this.logger.log(
+          `Guidance sweep upgraded ${upgraded}/${pending.length} booking(s) to UPGRADED (${this.ollama.model})`,
         );
       }
+      return upgraded;
+    } finally {
+      this.isSweeping = false;
     }
-
-    if (upgraded > 0) {
-      this.logger.log(
-        `Guidance sweep upgraded ${upgraded}/${pending.length} booking(s) to UPGRADED (${this.ollama.model})`,
-      );
-    }
-    return upgraded;
   }
 
   /**
