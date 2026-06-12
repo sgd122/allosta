@@ -51,6 +51,7 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
   async function freshBooking(
     status: BookingStatus,
     concern?: string,
+    subjectId?: string,
   ): Promise<string> {
     slotSeq += 1;
     const startAt = new Date(Date.now() + (100 + slotSeq) * 24 * 60 * 60 * 1000);
@@ -67,7 +68,9 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
         slotId: slot.id,
         customerId: islandA.customerId,
         subjectType: SubjectType.CUSTOMER,
-        subjectId: islandA.customerId,
+        // subjectId defaults to the applicant (self-consultation); pass a linked
+        // relative's id to model a family-data consultation.
+        subjectId: subjectId ?? islandA.customerId,
         status,
         ...(concern !== undefined && { concern }),
       },
@@ -78,7 +81,7 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
   // ── AC-P1: deterministic assembly + field correctness ──────────────────────
 
   describe('AC-P1: deterministic assembly', () => {
-    it('assembles indicators (metricKey asc), concern, and family; identical input → identical output', async () => {
+    it('assembles indicators (metricKey asc) + concern, and SUPPRESSES family for a self-consultation; identical input → identical output', async () => {
       // A second test result for the same subject so multiple metrics surface.
       await prisma.testResult.create({
         data: {
@@ -126,7 +129,11 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
       expect(brief.bookingId).toBe(bookingId);
       expect(brief.concern).toBe('수면이 고민입니다');
       expect(brief.subjectId).toBe(islandA.customerId);
-      expect(brief.family.map((f) => f.customerId)).toContain(relative.id);
+      // Self-consultation (subject == applicant): family context is suppressed
+      // even though the applicant HAS an ACCEPTED family link — it is only
+      // meaningful when consulting on a linked family member's data.
+      expect(brief.family).toEqual([]);
+      expect(brief.family.map((f) => f.customerId)).not.toContain(relative.id);
 
       // Indicators sorted metricKey asc — deterministic ordering.
       const keys = brief.indicators.map((i) => i.metricKey);
@@ -144,6 +151,66 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
         JSON.stringify(brief.indicators),
       );
       expect(JSON.stringify(brief2.family)).toBe(JSON.stringify(brief.family));
+    });
+
+    it('family-data consultation: shows family context AND the subject (linked relative) test indicators', async () => {
+      // The applicant (islandA.customer) books using a LINKED relative's test
+      // result, so the consultation subject is the relative — not the applicant.
+      const relativeUser = await prisma.user.create({
+        data: {
+          email: `${islandA.unique}-famsubj@example.test`,
+          passwordHash: 'x',
+          role: 'CUSTOMER',
+        },
+      });
+      const relative = await prisma.customer.create({
+        data: {
+          userId: relativeUser.id,
+          name: `FamSubject ${islandA.unique}`,
+          phone: '010-3333-4444',
+        },
+      });
+      await prisma.familyLink.create({
+        data: {
+          inviterCustomerId: islandA.customerId,
+          inviteeCustomerId: relative.id,
+          status: FamilyLinkStatus.ACCEPTED,
+          code: `brief-famsubj-${islandA.unique}`,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+      // The relative's OWN test result — its metrics must surface as the brief
+      // indicators (proving indicators follow the subject, not the applicant).
+      await prisma.testResult.create({
+        data: {
+          subjectType: SubjectType.CUSTOMER,
+          subjectId: relative.id,
+          serviceType: 'hormone',
+          metrics: { relative_marker: 7 },
+        },
+      });
+
+      const bookingId = await freshBooking(
+        BookingStatus.CONFIRMED,
+        undefined,
+        relative.id,
+      );
+      const brief = await consultationService.getBookingBrief(
+        islandA.counselorId,
+        bookingId,
+      );
+
+      // Subject is the relative (family member), not the applicant.
+      expect(brief.subjectId).toBe(relative.id);
+      // Family context appears for a family-data consultation and links back to
+      // the consenting applicant.
+      expect(brief.family.map((f) => f.customerId)).toContain(
+        islandA.customerId,
+      );
+      // Indicators are the SUBJECT (relative)'s test results, not the applicant's.
+      expect(brief.indicators.map((i) => i.metricKey)).toContain(
+        'relative_marker',
+      );
     });
 
     it('orders pastRecords createdAt desc (newest first)', async () => {

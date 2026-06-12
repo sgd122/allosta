@@ -533,6 +533,7 @@ export class ConsultationService {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
       select: {
+        customerId: true,
         subjectType: true,
         subjectId: true,
         concern: true,
@@ -541,6 +542,15 @@ export class ConsultationService {
     if (!booking) {
       throw new ForbiddenException('Booking not found');
     }
+
+    // Family context is only meaningful when the consultation is about a LINKED
+    // family member's data — i.e. the applicant (booking.customerId) booked using
+    // a family account's test result, so the subject differs from the applicant.
+    // For a self-consultation (subject == applicant) it is suppressed: the
+    // counselor is reviewing the applicant's own data, not a family member's.
+    const isFamilyConsultation =
+      booking.subjectType === SubjectType.CUSTOMER &&
+      booking.subjectId !== booking.customerId;
 
     const [testResults, pastRecords, family, subjectName] = await Promise.all([
       this.prisma.testResult.findMany({
@@ -571,7 +581,9 @@ export class ConsultationService {
           recommendation: true,
         },
       }),
-      this.resolveFamilyContext(booking.subjectType, booking.subjectId),
+      isFamilyConsultation
+        ? this.resolveFamilyContext(booking.subjectType, booking.subjectId)
+        : Promise.resolve<BriefFamilyContext[]>([]),
       this.resolveSubjectName(booking.subjectType, booking.subjectId),
     ]);
 
