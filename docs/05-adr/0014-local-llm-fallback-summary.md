@@ -24,7 +24,7 @@
 
 - **예약 단위 엔티티**: `ConsultationBriefGuidance { id, bookingId @unique, status BriefGuidanceStatus @default(FALLBACK), model String?, content, createdAt, updatedAt }`. `bookingId @unique`가 스윕의 멱등 업서트 타깃을 제공한다. `Booking` 1:1 관계는 `onDelete: Cascade`로 선언한다. 가이던스가 **예약**에 귀속되므로(상담 기록이 아님) 상담 전에도 항상 존재할 수 있다.
 - **브리핑 열람 시 FALLBACK 보장**: 상담사가 브리핑을 열면(`getBookingBrief` → `GET /counselor/bookings/:id/brief`) `GuidanceService.ensureFallbackForBooking(bookingId)`가 결정론 템플릿(검사 지표 이상 플래그 + 과거 기록 + `concern` 기반 진행 안내)을 `status=FALLBACK`으로 보장한다 — 항상 즉시 완료, Ollama 의존 없음. `createRecord`는 가이던스를 건드리지 않는다(생명주기 완전 분리).
-- **OpsScheduler 스윕**: `OpsSchedulerService.handleInterval()`이 `sweepPendingUpgrades()`를 호출한다(`sweepNoShows` 형제). 스윕은 `status=FALLBACK` 행만 대상으로 하며, Ollama가 도달 가능하면 `gemma4:e4b`로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade하지 않는다. 멱등.
+- **OpsScheduler 스윕**: `OpsSchedulerService.handleInterval()`이 `sweepPendingUpgrades()`를 호출한다(`sweepNoShows` 형제). 스윕은 `status=FALLBACK` 행만 대상으로 하며, Ollama가 도달 가능하면 `gemma4:e4b`로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade하지 않는다. 멱등. `@Interval`은 이전 실행을 await하지 않으므로(setInterval 의미론), 로컬 LLM 생성이 5초를 넘기면 다음 틱과 겹쳐 동일 FALLBACK 건에 중복 Ollama 요청이 발행될 수 있다 — `GuidanceService`의 인스턴스 단위 `isSweeping` 락(try/finally 해제)으로 겹치는 스윕을 drop한다.
 - **LLM 어댑터 경계**: `GuidanceGeneratorInterface`로 `TemplateGuidance`(결정론)와 `OllamaGuidance`(로컬 LLM)를 분리한다. `OllamaGuidance`의 `available()` 헬스체크가 실패하면 스윕은 해당 사이클을 건너뛴다. 환경 변수 미설정 시 기본값(`OLLAMA_BASE_URL=http://localhost:11434`, `SUMMARY_MODEL=gemma4:e4b`)을 사용하며 startup assertion 없음 — **fail-soft**.
 - **수동 트리거 없음**: 데모용 수동 엔드포인트를 두지 않는다. 서버가 `@Interval` 스윕으로 업그레이드를 자동 수행하므로, Ollama+모델이 있으면 ~1 스윕 사이클 내에 자동으로 UPGRADED가 노출된다.
 
