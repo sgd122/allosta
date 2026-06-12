@@ -61,9 +61,16 @@ a {
     opacity: 0;
     transform: translateY(8px);
   }
+  /* `to` intentionally omits `transform`: with animation-fill-mode `both`,
+     declaring transform here would leave a lingering identity transform on the
+     element, promoting it to a composited layer. A Radix surface Card draws its
+     1px border as an outset box-shadow clipped by the card's own
+     `overflow: hidden`; on a composited layer at a subpixel offset that border
+     loses pixel-snapping and the right/bottom edges render broken. Letting the
+     element settle back to no transform keeps the entrance motion but restores a
+     crisp border. */
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -74,6 +81,21 @@ a {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ── Radix surface Card border hardening ─────────────────────────
+   Radix draws a surface Card's 1px border as an OUTSET box-shadow on a
+   ::after pseudo, then clips it with the card's own `overflow: hidden`.
+   When the card lands on a sub-pixel offset (common in this layout, e.g.
+   top = 287.5px), that clipped ring loses pixel-snapping and its right/bottom
+   edges render broken. Chrome's compositor happened to hide it; other
+   Chromium builds (e.g. Comet) do not. Drawing the ring as an INSET shadow
+   paints it inside the padding box, where `overflow: hidden` never clips it —
+   so the border is crisp on every browser regardless of sub-pixel position. */
+.rt-BaseCard.rt-variant-surface::after {
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--gray-a5);
 }
 
 /* ── App shell ───────────────────────────────────────────────── */
