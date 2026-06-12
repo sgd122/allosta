@@ -41,6 +41,7 @@ export class BookingController {
       user.customerId as string,
       dto.slotId,
       dto.testResultId,
+      dto.concern,
     );
   }
 
