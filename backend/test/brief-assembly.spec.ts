@@ -1,5 +1,10 @@
 import { INestApplication } from '@nestjs/common';
-import { BookingStatus, FamilyLinkStatus, SubjectType } from '@prisma/client';
+import {
+  BookingStatus,
+  BriefGuidanceStatus,
+  FamilyLinkStatus,
+  SubjectType,
+} from '@prisma/client';
 import request from 'supertest';
 import { ConsultationService } from '../src/consultation/consultation.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -129,6 +134,13 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
       expect(brief.bookingId).toBe(bookingId);
       expect(brief.concern).toBe('수면이 고민입니다');
       expect(brief.subjectId).toBe(islandA.customerId);
+      // ADR 0014: opening the brief ensures a pre-consultation guidance row.
+      // In the test env (Ollama unreachable) it is FALLBACK with non-empty
+      // deterministic content and no model.
+      expect(brief.guidance).not.toBeNull();
+      expect(brief.guidance!.status).toBe(BriefGuidanceStatus.FALLBACK);
+      expect(brief.guidance!.model).toBeNull();
+      expect(brief.guidance!.content.length).toBeGreaterThan(0);
       // Self-consultation (subject == applicant): family context is suppressed
       // even though the applicant HAS an ACCEPTED family link — it is only
       // meaningful when consulting on a linked family member's data.
