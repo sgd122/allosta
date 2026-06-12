@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import {
-  AiSummaryStatus,
   BookingStatus,
   Outcome,
   Prisma,
@@ -34,7 +33,6 @@ export class AnalyticsService {
       challengeEnrollments,
       challengeConversionRate,
       briefOpenRate,
-      aiSummaryMetrics,
     ] = await Promise.all([
       this.countTotalRecords(counselorId),
       this.groupByOutcome(counselorId),
@@ -46,7 +44,6 @@ export class AnalyticsService {
       this.countChallengeEnrollments(counselorId),
       this.computeChallengeConversion(counselorId),
       this.computeBriefOpenRate(counselorId),
-      this.computeAiSummaryMetrics(counselorId),
     ]);
 
     const outcomeDistribution = this.buildOutcomeDistribution(outcomeGroups);
@@ -71,8 +68,6 @@ export class AnalyticsService {
       challengeEnrollments,
       challengeConversionRate,
       briefOpenRate,
-      aiSummaryCount: aiSummaryMetrics.total,
-      aiSummaryUpgradedRatio: aiSummaryMetrics.upgradedRatio,
     };
   }
 
@@ -429,38 +424,5 @@ export class AnalyticsService {
     ]);
 
     return denominator > 0 ? numerator / denominator : 0;
-  }
-
-  /**
-   * AI summary auxiliary metrics (AC-P7 aux).
-   *   total         = count of all ConsultationAiSummary rows
-   *   upgradedRatio = UPGRADED / total
-   *
-   * Scope: slot.counselorId via the record → booking → slot relation chain,
-   * mirroring the groupBookingFunnel own/all pattern.
-   */
-  private async computeAiSummaryMetrics(
-    counselorId?: string,
-  ): Promise<{ total: number; upgradedRatio: number }> {
-    const scopeWhere = counselorId
-      ? { record: { booking: { slot: { counselorId } } } }
-      : undefined;
-
-    const [total, upgraded] = await Promise.all([
-      this.prisma.consultationAiSummary.count({
-        where: scopeWhere,
-      }),
-      this.prisma.consultationAiSummary.count({
-        where: {
-          ...scopeWhere,
-          status: AiSummaryStatus.UPGRADED,
-        },
-      }),
-    ]);
-
-    return {
-      total,
-      upgradedRatio: total > 0 ? upgraded / total : 0,
-    };
   }
 }

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { BookingService } from '../booking/booking.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
-import { SummaryService } from '../consultation/summary/summary.service';
+import { GuidanceService } from '../consultation/guidance/guidance.service';
 
 /**
  * Thin timing-only scheduler for operational lifecycle sweeps.
@@ -22,7 +22,7 @@ export class OpsSchedulerService {
   constructor(
     private readonly bookingService: BookingService,
     private readonly waitlistService: WaitlistService,
-    private readonly summaryService: SummaryService,
+    private readonly guidanceService: GuidanceService,
   ) {}
 
   @Interval(5_000)
@@ -32,7 +32,7 @@ export class OpsSchedulerService {
     const expired = await this.waitlistService.sweepWaitlistOffers();
     // Local-LLM FALLBACK→UPGRADED sweep (ADR 0014). No-op (returns 0) when
     // Ollama is unreachable, keeping the golden path Ollama-independent.
-    const upgraded = await this.summaryService.sweepPendingUpgrades();
+    const upgraded = await this.guidanceService.sweepPendingUpgrades();
 
     if (noShows > 0) {
       this.logger.log(`OpsScheduler: ${noShows} booking(s) marked NO_SHOW`);
@@ -49,7 +49,7 @@ export class OpsSchedulerService {
     }
     if (upgraded > 0) {
       this.logger.log(
-        `OpsScheduler: ${upgraded} consultation summary(ies) upgraded`,
+        `OpsScheduler: ${upgraded} consultation guidance upgraded`,
       );
     }
   }

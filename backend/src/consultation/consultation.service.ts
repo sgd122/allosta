@@ -5,7 +5,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  AiSummaryStatus,
   BookingStatus,
   ConsultationRecord,
   ConsultationRecordMetric,
@@ -21,7 +20,10 @@ import {
   MetricRefDto,
   UpdateConsultationRecordDto,
 } from './dto/create-consultation-record.dto';
-import { SummaryService } from './summary/summary.service';
+import {
+  GuidanceResult,
+  GuidanceService,
+} from './guidance/guidance.service';
 
 /**
  * A booking on the counselor's own schedule (AC4/AC14 "본인 일정 확인").
@@ -105,13 +107,6 @@ export interface CounselorRecordEntry {
   customerName: string;
   products: { productId: string; name: string; category: string }[];
   metrics: { testResultId: string; metricKey: string }[];
-  // Machine-generated post-consultation summary (ADR 0014). Null until the
-  // post-commit FALLBACK persists; status flips FALLBACK→UPGRADED via the sweep.
-  aiSummary: {
-    status: AiSummaryStatus;
-    model: string | null;
-    content: string;
-  } | null;
 }
 
 /** A single out-of-range / interpreted indicator surfaced in the brief (AC-P1). */
@@ -157,6 +152,11 @@ export interface BookingBrief {
   indicators: BriefIndicator[];
   pastRecords: BriefPastRecord[];
   family: BriefFamilyContext[];
+  // Pre-consultation AI guidance (ADR 0014): how to conduct the UPCOMING
+  // consultation, derived from the indicators + pastRecords + concern. FALLBACK
+  // is ensured on brief open; the sweep upgrades it to UPGRADED when Ollama is
+  // present. Null only if the booking row could not be loaded for guidance.
+  guidance: GuidanceResult | null;
 }
 
 @Injectable()
@@ -164,7 +164,7 @@ export class ConsultationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
-    private readonly summary: SummaryService,
+    private readonly guidance: GuidanceService,
   ) {}
 
   /**
@@ -354,13 +354,9 @@ export class ConsultationService {
       return { ...record, products, metrics };
     });
 
-    // (e) Post-consultation AI summary (ADR 0014). Run AFTER the transaction
-    // commits — never inside it. The template FALLBACK is synchronous and
-    // deterministic (no Ollama dependency), so this guarantees exactly one
-    // summary row on the response path without blocking on the LLM. The gemma
-    // UPGRADE happens later via the OpsScheduler sweep, off the request path.
-    await this.summary.persistFallback(record.id);
-
+    // No AI side-effect here (ADR 0014 redesign): AI guidance is a PRE-
+    // consultation artifact keyed by booking, generated lazily on brief open —
+    // createRecord no longer touches AI.
     return record;
   }
 
@@ -602,6 +598,11 @@ export class ConsultationService {
       )
       .sort((a, b) => a.metricKey.localeCompare(b.metricKey));
 
+    // Pre-consultation AI guidance (ADR 0014): ensure a deterministic FALLBACK
+    // row exists for this booking (idempotent; never clobbers an UPGRADED row).
+    // The gemma UPGRADE happens later via the OpsScheduler sweep, off this path.
+    const guidance = await this.guidance.ensureFallbackForBooking(bookingId);
+
     // DB-idempotent first-open marker: only writes when still null (AC-P7).
     await this.prisma.booking.updateMany({
       where: { id: bookingId, briefOpenedAt: null },
@@ -617,6 +618,7 @@ export class ConsultationService {
       indicators,
       pastRecords,
       family,
+      guidance,
     };
   }
 
@@ -692,7 +694,6 @@ export class ConsultationService {
           },
         },
         metrics: { select: { testResultId: true, metricKey: true } },
-        aiSummary: { select: { status: true, model: true, content: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -724,13 +725,6 @@ export class ConsultationService {
           testResultId: m.testResultId,
           metricKey: m.metricKey,
         })),
-        aiSummary: r.aiSummary
-          ? {
-              status: r.aiSummary.status,
-              model: r.aiSummary.model,
-              content: r.aiSummary.content,
-            }
-          : null,
       })),
     );
   }

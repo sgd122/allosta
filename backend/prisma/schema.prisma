@@ -178,6 +178,10 @@ model Booking {
   testResult    TestResult?         @relation(fields: [testResultId], references: [id], onDelete: SetNull)
   record        ConsultationRecord?
   notifications Notification[]
+  // Pre-consultation AI guidance (ADR 0014). Advises the counselor how to
+  // conduct the UPCOMING consultation, keyed by bookingId @unique. Distinct from
+  // any post-consultation artifact — generated/refreshed lazily on brief open.
+  aiGuidance    ConsultationBriefGuidance?
 
   @@index([slotId])
   @@index([customerId])
@@ -200,36 +204,36 @@ model ConsultationRecord {
   products    ConsultationRecordProduct[]
   metrics     ConsultationRecordMetric[]
   enrollments ChallengeEnrollment[]
-  // Post-consultation AI summary (ADR 0014). Distinct from the counselor-authored
-  // `summary` above: this is machine-generated, has a FALLBACK→UPGRADED lifecycle,
-  // and is an idempotent upsert target keyed by recordId @unique.
-  aiSummary   ConsultationAiSummary?
 
   @@index([counselorId])
 }
 
-// Post-consultation AI summary (ADR 0014). Generated AFTER createRecord commits —
-// never inside the record transaction (reproducibility: golden path must pass
-// without Ollama). The deterministic template FALLBACK is persisted synchronously
-// right after createRecord; the OpsScheduler @Interval sweep upgrades FALLBACK rows
-// to UPGRADED when local Ollama (gemma3n:e4b) is detected. The row's absence means
+// Pre-consultation AI guidance (ADR 0014). Advises the counselor how to conduct
+// the UPCOMING consultation, derived from the subject's test indicators + prior
+// consultation records + the customer's concern. Keyed by bookingId @unique.
+//
+// Generated lazily on brief open: the deterministic template FALLBACK is upserted
+// the first time the counselor opens the brief (never overwriting an existing
+// UPGRADED row). The OpsScheduler @Interval sweep upgrades FALLBACK rows to
+// UPGRADED when local Ollama (gemma) is detected. The row's absence means
 // "not yet generated" without a sentinel; `status` drives the lifecycle.
-enum AiSummaryStatus {
+// Reproducibility: the template FALLBACK keeps the golden path Ollama-independent.
+enum BriefGuidanceStatus {
   FALLBACK
   UPGRADED
 }
 
-model ConsultationAiSummary {
-  id        String          @id @default(cuid())
-  recordId  String          @unique
-  status    AiSummaryStatus @default(FALLBACK)
-  // The model name when UPGRADED (e.g. "gemma3n:e4b"); null on FALLBACK.
+model ConsultationBriefGuidance {
+  id        String              @id @default(cuid())
+  bookingId String              @unique
+  status    BriefGuidanceStatus @default(FALLBACK)
+  // The gemma model name when UPGRADED; null on FALLBACK.
   model     String?
   content   String
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
 
-  record ConsultationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 }
 
 model Product {

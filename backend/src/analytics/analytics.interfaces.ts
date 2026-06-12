@@ -72,16 +72,6 @@ export interface AnalyticsDashboard {
    * denominator is zero.
    */
   briefOpenRate: number;
-  /**
-   * Total count of ConsultationAiSummary rows, scoped by slot.counselorId
-   * (AC-P7 aux). Includes both FALLBACK and UPGRADED rows.
-   */
-  aiSummaryCount: number;
-  /**
-   * UPGRADED / total ConsultationAiSummary rows (AC-P7 aux). Zero when
-   * aiSummaryCount is zero.
-   */
-  aiSummaryUpgradedRatio: number;
 }
 
 export interface AnalyticsRecordRow {
