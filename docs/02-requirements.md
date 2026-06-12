@@ -155,6 +155,19 @@
 | FR12-3 | 상담사는 `PATCH /slots/:id`로 본인 슬롯을 수정, `DELETE /slots/:id`로 삭제할 수 있다. 활성 예약(`PENDING` 또는 `CONFIRMED`)이 있는 슬롯 삭제 시도는 `409 CONFLICT`를 반환한다. |
 | FR12-4 | 관리자는 `POST/PATCH/DELETE /admin/counselors/:id/slots` 및 `/admin/slots/:id`로 임의 상담사의 슬롯을 관리할 수 있다. |
 
+### FR14 — 상담 준비·생산성 자동화 (ADR 0014)
+
+| ID | 요구사항 |
+|----|---------|
+| FR14-1 | 상담사는 `GET /counselor/bookings/:bookingId/brief`로 결정론 브리핑을 조회할 수 있다. 브리핑은 TestResult 지표(`metricKey` asc, 이상 플래그 포함) + 과거 ConsultationRecord(`createdAt` desc) + ACCEPTED FamilyLink 맥락 + 고객 선택 `concern`을 서버가 읽기 전용으로 조립한다. 타 상담사 예약 조회 시 `403`. |
+| FR14-2 | 브리핑을 최초 조회하면 `Booking.briefOpenedAt`이 해당 시각으로 1회만 기록된다(조건부 `updateMany({ where: { briefOpenedAt: null } })` — DB 레이어 멱등, 2회 이상 호출해도 시각 불변). |
+| FR14-3 | 고객은 예약 생성 시 선택적으로 `concern`(사전질문, `@MaxLength(1000)`)을 함께 전달할 수 있다. `concern`은 브리핑 조립에만 사용되며 고객 API로 반환되지 않는다(write-only). |
+| FR14-4 | `createRecord` 트랜잭션 **커밋 직후** 결정론 템플릿 요약이 `ConsultationAiSummary(status=FALLBACK)`로 동기 영속된다. 트랜잭션 시그니처는 불변이며 LLM은 critical path에 있지 않다. |
+| FR14-5 | OpsScheduler `@Interval(5000)` 스윕(`sweepPendingUpgrades`)이 `status=FALLBACK` 행만 대상으로 Ollama(`OLLAMA_BASE_URL`, 기본 `http://localhost:11434`) `SUMMARY_MODEL`(기본 `gemma3n:e4b`)로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade 하지 않는다. 멱등. |
+| FR14-6 | Ollama 미설치·연결 실패·env 미설정 시 스윕은 해당 사이클을 건너뛰고 FALLBACK 행을 유지한다(fail-soft). 환경 변수 미설정 시 기본값 사용, startup assertion 없음. |
+| FR14-7 | 관리자는 `POST /admin/summary/sweep`(`@Roles ADMIN`)으로 스윕을 즉시 수동 트리거할 수 있다(`{ upgraded }` 반환). |
+| FR14-8 | `GET /admin/analytics`는 `briefOpenRate`(분자=`briefOpenedAt != null`, 분모=`status IN (CONFIRMED,COMPLETED,NO_SHOW)`) + `aiSummaryCount` + `aiSummaryUpgradedRatio`를 추가로 반환한다. 기존 `scope=own|all` + `counselorId` 필터를 준수한다. |
+
 ### FR13 — 관리 프로그램(챌린지) 카탈로그 및 등록 (BioCom step-3 — ADR 0007)
 
 | ID | 요구사항 |
@@ -255,6 +268,13 @@
 | **AC-C3** 등록 소유권·유효성 | 타 상담사 담당 예약에 기록+등록 시도 시 `403`. 존재하지 않는 `challengeId` 지정 시 트랜잭션 진입 전 `404`(기록 미생성). 동일 record에 대한 2차 등록은 `@@unique([recordId])`로 차단된다. | 통합 테스트: 비담당 403 / 잘못된 challengeId 404(기록 0건) / 중복 등록 위반 assert(2차 등록은 `prisma.challengeEnrollment.create` 직접 삽입으로 검증) |
 | **AC-C4** 챌린지 등록 Analytics | `GET /admin/analytics`가 `challengeEnrollments`(등록 수) + `challengeConversionRate`(구매→등록 전환율, `number\|null`)를 반환한다. 범위는 record JOIN의 counselorId로 산정되며, scope=own/all + counselorId 필터를 준수한다. | 통합 테스트(`analytics-challenge.spec.ts`): 등록 수·전환율 일치 + disjoint 상담사 범위 분리 + record JOIN 스코핑 assert |
 | **AC-C5** 전환율 0-vs-null 구분 | `challengeConversionRate`는 PURCHASED 기록이 0건이면 `null`(데이터 없음), PURCHASED 기록이 있으나 등록이 0건이면 `0`(전환 없음)을 반환해 두 경우를 구분한다. | 통합 테스트: PURCHASED 0건 → null / PURCHASED 있고 등록 0건 → 0 assert |
+| **AC-P1** 브리핑 결정론 조립 | `GET /counselor/bookings/:bookingId/brief` 응답의 지표 목록이 `metricKey` asc 순서로, 과거 기록이 `createdAt` desc 순서로 정렬된다. ACCEPTED FamilyLink 맥락과 `concern`이 포함된다. | 단위 테스트(정렬·필드 정확성) + 통합 테스트 |
+| **AC-P2** 브리핑 소유권 403 | 타 상담사가 `GET /counselor/bookings/:bookingId/brief` 호출 시 `403`. | 통합 테스트(`assertBookingOwnedByCounselor` 재사용) |
+| **AC-P3** 골든패스 브리핑 단계 | 예약(+concern) → 브리핑 열람(`briefOpenedAt` 설정) → 확정 → createRecord → FALLBACK 요약 영속 → 챌린지 등록 → 집계 흐름이 end-to-end로 통과한다. | `golden-path.e2e-spec.ts` 확장 |
+| **AC-P4** FALLBACK 기본 영속 | `createRecord` 응답 직후 `ConsultationAiSummary(status=FALLBACK)` 1건이 존재한다. Ollama 미존재 환경에서도 성립한다. | E2E + 단위 테스트(TemplateSummarizer 결정론) |
+| **AC-P5** Ollama 업그레이드 어댑터 경계 | `OllamaSummarizer`의 payload/timeout/실패→폴백 회귀 경계만 단정한다. 출력 텍스트는 단정하지 않는다. | 어댑터 경계 단위 테스트 |
+| **AC-P6** 비블로킹 | `createRecord` 응답에 FALLBACK 요약이 존재하고, 스윕 호출 **전**에는 UPGRADED 행이 없다(업그레이드 작업이 request path에 없음을 단정). | 통합 테스트: createRecord 직후 UPGRADED=0 + sweepPendingUpgrades 호출 후 UPGRADED≥1 assert |
+| **AC-P7** briefOpenRate 집계 | `GET /admin/analytics` 응답에 `briefOpenRate`(분모=CONFIRMED+COMPLETED+NO_SHOW)가 결정론 집계값으로 포함된다. | 통합 테스트: seed 후 기대값 일치 assert |
 | **AC-M1** 검사 지표 참조범위·상태 | 시드된 BioCom `TestResult`의 각 지표가 `referenceRange`와 `status(정상/주의/위험)`를 읽기 API로 노출한다. | 통합 테스트(`test-result-metrics.spec.ts`): 시드 지표가 referenceRange/status 노출 assert |
 | **AC-M2** 결과 페이지 상태 배지 | 고객 결과 페이지가 지표별 참조범위 컬럼과 상태 배지(정상=teal/주의=amber/위험=red)를 렌더한다. 프론트 타입 경계(`TestMetric`)가 새 필드를 드롭하지 않는다. | 프론트 단위 테스트(`toMetricList` 확장 형태 보존) + e2e 골든패스 상태 배지 가시성 assert |
 

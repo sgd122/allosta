@@ -1,7 +1,7 @@
 # 시스템 설계 문서 — 상담 예약·전환 분석 플랫폼 (Allosta)
 
 > **문서 성격**: 2주 평가용 과제의 1차 산출물. 코드보다 먼저 완성되며, 구현 중 변경된 결정만 갱신한다.
-> **관련 ADR**: [ADR 0001](./05-adr/0001-backend-framework.md) · [ADR 0002](./05-adr/0002-concurrency-strategy.md) · [ADR 0003](./05-adr/0003-polymorphic-subject.md) · [ADR 0004](./05-adr/0004-notification-simulation.md) · [ADR 0005](./05-adr/0005-monorepo.md) · [ADR 0006](./05-adr/0006-ops-hardening.md) · [ADR 0007](./05-adr/0007-challenge-enrollment.md)
+> **관련 ADR**: [ADR 0001](./05-adr/0001-backend-framework.md) · [ADR 0002](./05-adr/0002-concurrency-strategy.md) · [ADR 0003](./05-adr/0003-polymorphic-subject.md) · [ADR 0004](./05-adr/0004-notification-simulation.md) · [ADR 0005](./05-adr/0005-monorepo.md) · [ADR 0006](./05-adr/0006-ops-hardening.md) · [ADR 0007](./05-adr/0007-challenge-enrollment.md) · [ADR 0014](./05-adr/0014-local-llm-fallback-summary.md)
 
 ---
 
@@ -60,8 +60,9 @@ graph TB
         BookingMod["BookingModule\nBookingController\nBookingService\n── PENDING-first 생성\n── confirm (PENDING→CONFIRMED)\n── 취소 훅 → Waitlist"]
         AvailMod["AvailabilityModule\nAvailabilityService\n── 가용성=파생값\n── 통합 캘린더 (availableCount)\n── 업무시간 필터 [9,18)"]
         WaitlistMod["WaitlistModule\nWaitlistController\nWaitlistService\n── FIFO 공석 알림"]
-        ConsultMod["ConsultationModule\nConsultationController\nConsultationService\n── 소유권 검증\n── 지표 연결"]
-        AnalyticsMod["AnalyticsModule\nAnalyticsController\nAnalyticsService\n── 전환율 실시간 집계\n── 지표별 전환\n── scope 토글(own/all)"]
+        ConsultMod["ConsultationModule\nConsultationController\nConsultationService\n── 소유권 검증\n── 지표 연결\n── 브리핑 조립 (GET /counselor/bookings/:id/brief)\n── SummaryModule 주입 (createRecord 후 FALLBACK 영속)"]
+        SummaryMod["SummaryModule\nSummaryService\nTemplateSummarizer\nOllamaSummarizer\n── persistFallback (결정론, 동기)\n── sweepPendingUpgrades (FALLBACK→UPGRADED, 멱등)"]
+        AnalyticsMod["AnalyticsModule\nAnalyticsController\nAnalyticsService\n── 전환율 실시간 집계\n── 지표별 전환\n── scope 토글(own/all)\n── briefOpenRate · aiSummary 지표"]
         TestResultMod["TestResultModule\nTestResultController\n── GET /test-results\n── FamilyLink ACCEPTED 포함\n── UploadPipeline interface"]
         FamilyMod["FamilyModule\nFamilyController\nFamilyService\n── FamilyLink 초대 코드\n── PENDING→ACCEPTED→REVOKED"]
         NotifMod["NotificationModule\nNotificationService\nNotificationScheduler\n@Cron: REMINDER 스캔"]
@@ -75,7 +76,7 @@ graph TB
 
     subgraph DB["PostgreSQL 16 (Docker)"]
         PrismaORM["Prisma ORM\nschema.prisma\nmigrations/"]
-        Tables["User · Customer · Counselor\nAvailabilitySlot · Booking · ConsultationRecord\nProduct · ConsultationRecordProduct\nTestResult · ConsultationRecordMetric\nNotification · Waitlist · FamilyLink"]
+        Tables["User · Customer · Counselor\nAvailabilitySlot · Booking · ConsultationRecord\nProduct · ConsultationRecordProduct\nTestResult · ConsultationRecordMetric\nNotification · Waitlist · FamilyLink\nConsultationAiSummary"]
     end
 
     FE_Login -->|"POST /api/auth/login\n→ httpOnly 쿠키 설정"| API_Auth
@@ -165,7 +166,19 @@ erDiagram
         cuid subjectId "검사결과 소유 고객 (본인 or ACCEPTED 파트너)"
         cuid testResultId FK "nullable — 예약 근거 TestResult"
         enum status "PENDING|CONFIRMED|CANCELLED|COMPLETED|NO_SHOW"
+        string concern "nullable — 고객 사전질문 (write-only, 브리핑에만 노출)"
+        datetime briefOpenedAt "nullable — 상담사 최초 브리핑 열람 시각"
         datetime createdAt
+    }
+
+    ConsultationAiSummary {
+        cuid id PK
+        string recordId FK "ConsultationRecord (unique)"
+        enum status "FALLBACK|UPGRADED"
+        string model "nullable — UPGRADED 시 모델명(예: gemma3n:e4b)"
+        text content "요약 텍스트"
+        datetime createdAt
+        datetime updatedAt
     }
 
     ConsultationRecord {
@@ -271,6 +284,7 @@ erDiagram
     Customer ||--o{ ChallengeEnrollment : "1-N (cascade)"
     Counselor ||--o{ ChallengeEnrollment : "1-N (cascade)"
     ConsultationRecord ||--o| ChallengeEnrollment : "1-0..1 (cascade, @@unique recordId)"
+    ConsultationRecord ||--o| ConsultationAiSummary : "1-0..1 (cascade, recordId unique)"
 ```
 
 > **ChallengeEnrollment FK·유니크**: `challengeId`/`customerId`/`recordId`/`counselorId` 4개 FK는 **모두 `onDelete: Cascade`**다(`ConsultationRecordMetric`의 cascade 관용을 미러링). 덕분에 테스트 정리 루틴(`cleanupSeeded` — Customer→Counselor 순 삭제 후 cascade 의존)이 **변경 없이** 등록 행까지 정리한다. `@@unique([recordId])`는 한 상담 기록(=한 예약, `bookingId @unique`)당 최대 1건의 등록을 보장한다.
@@ -294,6 +308,10 @@ erDiagram
 **`TestResult.serviceType` + `metrics` 형태(BioCom — ADR 0007)**: `serviceType`은 자유 문자열을 유지(ADR 0007: seed-only/read-only)하되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수(7종: `METABOLIC_6`·`FOOD_INTOLERANCE`·`STRESS_AGING`·`NUTRIENT_HEAVY_METAL`·`GUT_MICROBIOME`·`HORMONE`·`PET_NUTRITION`)에서 코드를 가져와 표류를 차단한다. `metrics` JSONB 배열 요소는 `{metricKey, label?, value, unit?, referenceRange?, status?}`로 **하위호환 superset** 확장됐다 — 기존 소비자(`normalizeMetrics`, `toMetricList`)는 `{metricKey,value,unit}`만 읽고 새 키를 무시하므로 무영향. `status`/`referenceRange`는 결과 해석 UX를 위해 시드에 사전 계산되며(`status ∈ {정상,주의,위험}`), enum 대신 문자열을 쓴 것은 마이그레이션·테스트 픽스처 churn을 피하기 위함이다.
 
 **`Challenge` + `ChallengeEnrollment`(BioCom step-3 — ADR 0007)**: `Challenge`는 시드 관리 카탈로그(`GET /challenges`)이고, `ChallengeEnrollment`는 상담사가 상담 기록 생성 시 고객을 등록하는 join 엔티티다. 등록은 `createRecord` 트랜잭션 안에서 원자적으로 생성되며(`updateRecord`는 등록을 건드리지 않음), 존재하지 않는 `challengeId`는 트랜잭션 진입 **전** `findUnique` 가드가 깨끗한 404로 막는다. 코드는 outcome에 게이팅하지 않으며(어떤 outcome도 등록 가능), 구매와의 연관은 UI 컨벤션·Analytics 해석에서만 표현된다. `counselorId`는 비정규화 저장하되 Analytics 전환율은 항상 record JOIN(`ConsultationRecord.counselorId`)으로 범위를 산정한다.
+
+**`Booking.concern` + `Booking.briefOpenedAt`**: `concern`은 고객이 예약 생성 시 선택적으로 전달하는 사전질문(`@MaxLength(1000)`)이다. 브리핑 조립 시 상담사에게만 노출되며 고객 API로 반환하지 않는다(write-only). `briefOpenedAt`은 상담사가 브리핑을 최초 열람한 시각으로, 조건부 `updateMany({ where: { id: bookingId, briefOpenedAt: null } })`로 1회만 기록된다(DB 레이어 멱등 — 동시 열람 경쟁에서도 최초 1회만 설정).
+
+**`ConsultationAiSummary` + `AiSummaryStatus`**: `createRecord` 트랜잭션 커밋 직후 `SummaryService.persistFallback(record.id)`가 결정론 템플릿 요약을 `status=FALLBACK`으로 동기 영속한다. `recordId @unique`가 스윕의 멱등 업서트 타깃이다. OpsScheduler `@Interval(5000)` `sweepPendingUpgrades()`가 `status=FALLBACK` 행만 조회 → 로컬 Ollama 도달 가능 시 `gemma3n:e4b`로 생성 → `UPGRADED`로만 업서트(절대 downgrade 없음). Ollama 미설치·실패 시 FALLBACK 유지(fail-soft). 상담사 수동 `ConsultationRecord.summary`(必수 입력 텍스트)와는 별도 엔티티이며 생명주기가 완전히 분리된다(ADR 0014).
 
 **`ConsultationRecordMetric`**: 상담 기록과 검사 지표를 연결하는 조인 테이블. `metricKey`는 `TestResult.metrics` JSONB 배열 내 지표 식별자다. Analytics는 이 테이블을 조인해 "지표별 전환율"을 집계한다 — 단순 상담 CRM과의 차별점(R5). 조인 테이블은 `label` 없이 영문 `metricKey`만 저장하므로(저장 비정규화 회피), 대시보드 표시 계층(`지표별 구매 전환` 표·`연계 지표` 배지)은 프론트엔드 라벨 맵 `formatMetricKey()`(`frontend/src/entities/test-result/lib/metrics.ts`, `@/entities/test-result`로 노출)로 `glucose → 공복혈당` 한글 라벨로 변환한다 — 미등록 키는 키 원문으로 폴백. 지표 카탈로그가 seed 고정이라 정적 맵으로 충분하다(`formatServiceType`와 동일 패턴).
 
@@ -700,6 +718,16 @@ sequenceDiagram
     Booking ->> DB: slot.counselorId === 요청 상담사 검증\nUPDATE status=CONFIRMED
     Booking -->> FE: 200 { booking: { status: CONFIRMED } }
 
+    Note over Counselor, DB: 4b. 브리핑 열람 (briefOpenedAt 기록)
+    Counselor ->> FE: 예약 상세 브리핑 패널 열기
+    FE ->> Proxy: GET /api/proxy/counselor/bookings/:id/brief
+    Proxy ->> Consult: GET /counselor/bookings/:id/brief
+    Consult ->> DB: 소유권 검증 (assertBookingOwnedByCounselor)
+    Consult ->> DB: TestResult.metrics (metricKey asc) + 과거 ConsultationRecord (createdAt desc)\n+ ACCEPTED FamilyLink 맥락 + concern 조립
+    Consult ->> DB: UPDATE booking SET briefOpenedAt=now WHERE briefOpenedAt IS NULL (멱등)
+    Consult -->> FE: BookingBrief { indicators[], pastRecords[], familyContext?, concern? }
+    FE -->> Counselor: 브리핑 패널 표시
+
     Note over Counselor, DB: 5. 상담 기록 입력 (지표 연결 + 챌린지 등록 포함)
     Counselor ->> FE: 기록 폼 작성 (summary/recommendation/followUp, 관심상품, outcome=PURCHASED, actions[], metricRefs[], challengeId?)
     FE ->> Proxy: POST /api/proxy/consultation-records
@@ -707,14 +735,17 @@ sequenceDiagram
     Consult ->> DB: 담당 검증 (slot.counselorId === 요청 상담사)
     Consult ->> DB: (challengeId 있으면) 트랜잭션 전 challenge.findUnique 가드 → 없으면 404
     Consult ->> DB: BEGIN TX\nINSERT ConsultationRecord\nINSERT ConsultationRecordProduct[]\nINSERT ConsultationRecordMetric[]\n(challengeId 있으면) INSERT ChallengeEnrollment\nCOMMIT
+    Consult ->> DB: (커밋 직후, 트랜잭션 밖) INSERT ConsultationAiSummary\n(status=FALLBACK, TemplateSummarizer 결정론 텍스트)
     Consult -->> FE: 201 { record }
+    Note over Counselor, DB: 5b. OpsScheduler 스윕 (비동기, request path 밖)
+    Note over DB: @Interval(5000) sweepPendingUpgrades()\nFALLBACK 행 조회 → Ollama available?\n→ 가능: gemma3n:e4b 생성 후 UPGRADED 업서트\n→ 불가: skip (FALLBACK 유지, fail-soft)
 
-    Note over Admin, DB: 6. 관리자 전환 집계 (챌린지 등록 포함)
+    Note over Admin, DB: 6. 관리자 전환 집계 (챌린지 등록 + 브리핑 지표 포함)
     Admin ->> FE: 관리자 로그인 → /dashboard
     FE ->> Proxy: GET /api/proxy/admin/analytics
     Proxy ->> Analytics: GET /admin/analytics
-    Analytics ->> DB: ConsultationRecord JOIN\nProduct JOIN Metric JOIN ChallengeEnrollment\n전환율·상품별 관심·지표별 전환·챌린지 등록 수/전환율 집계
-    Analytics -->> FE: { conversionRate, outcomeDistribution,\n  productInterest[], metricConversion[],\n  challengeEnrollments, challengeConversionRate }
+    Analytics ->> DB: ConsultationRecord JOIN\nProduct JOIN Metric JOIN ChallengeEnrollment JOIN ConsultationAiSummary\n전환율·상품별 관심·지표별 전환·챌린지 등록 수/전환율\n+ briefOpenRate + aiSummaryCount + aiSummaryUpgradedRatio 집계
+    Analytics -->> FE: { conversionRate, outcomeDistribution,\n  productInterest[], metricConversion[],\n  challengeEnrollments, challengeConversionRate,\n  briefOpenRate, aiSummaryCount, aiSummaryUpgradedRatio }
     FE -->> Admin: 대시보드 차트 표시
 ```
 
@@ -802,6 +833,8 @@ sequenceDiagram
 | `POST` | `/bookings` | CUSTOMER | `{ slotId, testResultId }` | `Booking` (201, status=PENDING) | 409 (동시 예약 충돌), 403 (소유권 위반), 404 |
 | `PATCH` | `/bookings/:id/confirm` | COUNSELOR | — | `Booking` (200, status=CONFIRMED) | 403 (담당 아님 또는 PENDING 아님), 404 |
 | `DELETE` | `/bookings/:id` | CUSTOMER | — | `{ message }` (200) | 403 (본인 예약 아님), 404 |
+| `GET` | `/counselor/bookings/:bookingId/brief` | COUNSELOR | — | `BookingBrief` (`indicators[]`(metricKey asc, 이상 플래그), `pastRecords[]`(createdAt desc), `familyContext?`, `concern?`) — 최초 호출 시 `briefOpenedAt` 1회 기록 | 403 (타 상담사 예약), 404 |
+| `POST` | `/admin/summary/sweep` | ADMIN | — | `{ upgraded: number }` — FALLBACK→UPGRADED 스윕 수동 트리거 | 401, 403 |
 | `GET` | `/counselor/schedule` | COUNSELOR | — | `ScheduleEntry[]` (`PENDING\|CONFIRMED\|COMPLETED\|NO_SHOW` — `CANCELLED` 제외; subject·customer·slot·`hasRecord`·`status` 포함). `NO_SHOW`를 포함해 미방문 상담도 콘솔에서 검토·필터 가능. 기간(오늘/예정/지난/전체)·예약상태 2축 필터와 날짜별 그룹핑은 클라이언트에서 수행(`shared/lib/date` + `views/schedule/lib/filter`) | 401, 403 |
 | `POST` | `/consultation-records` | COUNSELOR | `{ bookingId, summary, recommendation, followUp?, interestedProductIds: uuid[], outcome: EXPLAINED\|GUIDED\|PURCHASED, metricRefs: { testResultId, metricKey }[], actions: ConsultationActionType[], challengeId?: string }` | `ConsultationRecord` (201; `challengeId` 지정 시 `ChallengeEnrollment` 1건 원자 생성) | 400 (summary·recommendation 빈값), 403 (담당 아님), 404 (challengeId 미존재 — 트랜잭션 전), 409 (이미 기록 존재) |
 | `GET` | `/challenges` | COUNSELOR | — | `Challenge[]` (`id, name, category, description, linkedServiceType` — 카테고리·이름 정렬, 전체 카탈로그) | 401, 403 |
@@ -851,3 +884,4 @@ sequenceDiagram
 | BioCom step-3 / 검사 도메인 | `Challenge`+`ChallengeEnrollment`(createRecord 원자 등록) · serviceType 자유 문자열+`SERVICE_TYPES` 상수 · metrics JSONB additive(referenceRange/status) · enum 식별자 동결, 라벨만 리브랜딩 | 기존 테스트 green 유지(enum 동결+JSONB superset+cascade FK로 `cleanupSeeded` 무변경), 등록 blast radius 최소, ADR 0003 정합 | [0007](./05-adr/0007-challenge-enrollment.md) |
 | 검사 결과서 그룹핑 | `TestResult`(serviceType 1종/row)를 (subjectId+검사일) 단위 결과서로 **표시 레벨** 그룹핑(`src/entities/test-result/lib/reports.ts`) · 검사결과 내 검사/연동 계정 서브탭 · 예약/내 예약 결과서 단위+친화 라벨 | 본인/가족 혼선 제거 + 검사 세트화 인식 정합. `Booking.testResultId`가 subject 앵커이므로 대표 id 전송으로 스키마/API/백엔드 테스트 무변경 | [0008](./05-adr/0008-test-report-grouping.md) |
 | 상담사 콘솔 일정 가시성·필터 | 스케줄에 `NO_SHOW` 포함(CANCELLED만 제외) + 기간·예약상태 2축 필터·날짜별 그룹핑을 클라이언트 순수 함수(`shared/lib/date`)로 수행 · 가용 일정도 날짜별 그룹 | 콘솔 데이터셋은 1인 단위로 작아 서버 왕복 불요(즉시 반응·단위 테스트 용이), `NO_SHOW` 가시화로 출석 정정 대상이 일정에서 사라지던 모순 해소 | [0013](./05-adr/0013-counselor-console-schedule-filtering.md) |
+| 로컬 LLM 폴백 요약 | 별도 `ConsultationAiSummary` 엔티티 + 결정론 FALLBACK 동기 영속 + OpsScheduler `@Interval` 스윕(FALLBACK→UPGRADED, 멱등) + fail-soft Ollama 어댑터 | golden path는 Ollama 없이도 항상 통과(재현성 불가침). `recordId @unique`가 멱등 업서트 타깃. 비결정 LLM을 어댑터 경계 안에 가두어 테스트 가능 경계와 비단정 경계를 명확히 분리 | [0014](./05-adr/0014-local-llm-fallback-summary.md) |
