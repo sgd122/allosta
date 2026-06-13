@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   BookingStatus,
+  CallOutcome,
   ConsultationRecord,
   ConsultationRecordMetric,
   ConsultationRecordProduct,
@@ -20,6 +21,7 @@ import {
   MetricRefDto,
   UpdateConsultationRecordDto,
 } from './dto/create-consultation-record.dto';
+import { LogCallDto, UpdateCallLogDto } from './dto/log-call.dto';
 import {
   GuidanceResult,
   GuidanceService,
@@ -137,6 +139,22 @@ export interface BriefFamilyContext {
 }
 
 /**
+ * One previously logged call attempt surfaced in the brief (newest first, ADR
+ * 0016). Unlike the creation receipt (CallLogReceipt) this DOES include `note`:
+ * the brief is shown ONLY to the assigned counselor inside the SAME ownership
+ * boundary as `phone` (assertBookingOwnedByCounselor), so surfacing the memo
+ * back to that counselor is consistent containment — it lets them review and
+ * correct what they logged. It is still never logged, nor surfaced in any admin
+ * aggregation (analytics reads `outcome` only).
+ */
+export interface BriefCallLog {
+  id: string;
+  outcome: CallOutcome;
+  note: string | null;
+  createdAt: Date;
+}
+
+/**
  * Read-only, deterministic pre-consultation brief for a booking (AC-P1). All
  * fields are derived projections of existing data (TestResult metrics, past
  * ConsultationRecords, ACCEPTED FamilyLink context, booking.concern) — no new
@@ -148,15 +166,38 @@ export interface BookingBrief {
   subjectType: SubjectType;
   subjectId: string;
   subjectName: string;
+  // Applicant customer's phone, surfaced PLAINTEXT for click-to-call (ADR 0016).
+  // Exposed ONLY here, inside the existing brief ownership boundary
+  // (assertBookingOwnedByCounselor) — never added to the schedule list or any
+  // analytics response type, and never written to logs (PII containment).
+  phone: string;
   concern: string | null;
   indicators: BriefIndicator[];
   pastRecords: BriefPastRecord[];
   family: BriefFamilyContext[];
+  // The booking's logged call attempts (newest first, ADR 0016). Surfaced inside
+  // the same ownership boundary as `phone` so the assigned counselor can review
+  // and correct what they logged. Empty when no calls have been logged.
+  callLogs: BriefCallLog[];
   // Pre-consultation AI guidance (ADR 0014): how to conduct the UPCOMING
   // consultation, derived from the indicators + pastRecords + concern. FALLBACK
   // is ensured on brief open; the sweep upgrades it to UPGRADED when Ollama is
   // present. Null only if the booking row could not be loaded for guidance.
   guidance: GuidanceResult | null;
+}
+
+/**
+ * Creation receipt returned after a call is logged (ADR 0016). Intentionally
+ * OMITS `note`: the memo is write-only, PII-adjacent evidence and is never echoed
+ * back in the response (containment principle — same reason it is never logged or
+ * aggregated). The counselor already holds the note they just submitted.
+ */
+export interface CallLogReceipt {
+  id: string;
+  bookingId: string;
+  counselorId: string;
+  outcome: CallOutcome;
+  createdAt: Date;
 }
 
 @Injectable()
@@ -533,6 +574,10 @@ export class ConsultationService {
         subjectType: true,
         subjectId: true,
         concern: true,
+        // Plaintext phone for click-to-call (ADR 0016). Narrow `select` keeps the
+        // customer projection to phone only — no other PII row is loaded — and it
+        // is surfaced exclusively in this brief response.
+        customer: { select: { phone: true } },
       },
     });
     if (!booking) {
@@ -548,40 +593,54 @@ export class ConsultationService {
       booking.subjectType === SubjectType.CUSTOMER &&
       booking.subjectId !== booking.customerId;
 
-    const [testResults, pastRecords, family, subjectName] = await Promise.all([
-      this.prisma.testResult.findMany({
-        where: {
-          subjectType: booking.subjectType,
-          subjectId: booking.subjectId,
-        },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          serviceType: true,
-          metrics: true,
-        },
-      }),
-      this.prisma.consultationRecord.findMany({
-        where: {
-          booking: {
+    const [testResults, pastRecords, family, subjectName, callLogs] =
+      await Promise.all([
+        this.prisma.testResult.findMany({
+          where: {
             subjectType: booking.subjectType,
             subjectId: booking.subjectId,
           },
-        },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          createdAt: true,
-          outcome: true,
-          summary: true,
-          recommendation: true,
-        },
-      }),
-      isFamilyConsultation
-        ? this.resolveFamilyContext(booking.subjectType, booking.subjectId)
-        : Promise.resolve<BriefFamilyContext[]>([]),
-      this.resolveSubjectName(booking.subjectType, booking.subjectId),
-    ]);
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            serviceType: true,
+            metrics: true,
+          },
+        }),
+        this.prisma.consultationRecord.findMany({
+          where: {
+            booking: {
+              subjectType: booking.subjectType,
+              subjectId: booking.subjectId,
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            createdAt: true,
+            outcome: true,
+            summary: true,
+            recommendation: true,
+          },
+        }),
+        isFamilyConsultation
+          ? this.resolveFamilyContext(booking.subjectType, booking.subjectId)
+          : Promise.resolve<BriefFamilyContext[]>([]),
+        this.resolveSubjectName(booking.subjectType, booking.subjectId),
+        // This booking's logged call attempts, newest first (ADR 0016). Scoped to
+        // THIS booking only — the ownership of the brief itself
+        // (assertBookingOwnedByCounselor above) is the access boundary.
+        this.prisma.callLog.findMany({
+          where: { bookingId },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            outcome: true,
+            note: true,
+            createdAt: true,
+          },
+        }),
+      ]);
 
     const indicators = testResults
       .flatMap((tr) =>
@@ -614,12 +673,137 @@ export class ConsultationService {
       subjectType: booking.subjectType,
       subjectId: booking.subjectId,
       subjectName,
+      phone: booking.customer.phone,
       concern: booking.concern,
       indicators,
       pastRecords,
       family,
+      callLogs,
       guidance,
     };
+  }
+
+  /**
+   * Records one click-to-call attempt against the booking as evidence for a
+   * possible no-show override (contact surfacing, ADR 0016). Ownership reuses
+   * `assertBookingOwnedByCounselor` — the SAME boundary as the brief, so a
+   * counselor can only log calls on their own bookings (AC-5), with no new auth
+   * surface (P2).
+   *
+   * NON-DESTRUCTIVE, loosely coupled (P5): this NEVER writes Booking.status.
+   * Attendance remains single-source-of-truth on Booking, transitioned only by
+   * PATCH /bookings/:id/attendance — the CallLog is pure evidence (AC-7). The
+   * outcome enum is validated at the DTO layer; `note` is optional and is never
+   * logged or surfaced in any admin aggregation.
+   */
+  async logCall(
+    counselorId: string,
+    bookingId: string,
+    dto: LogCallDto,
+  ): Promise<CallLogReceipt> {
+    await this.ownership.assertBookingOwnedByCounselor(counselorId, bookingId);
+
+    // `note` is persisted but deliberately excluded from the returned `select`
+    // so it is never serialized into the 201 response (PII-adjacent containment).
+    return this.prisma.callLog.create({
+      data: {
+        bookingId,
+        counselorId,
+        outcome: dto.outcome,
+        note: dto.note ?? null,
+      },
+      select: {
+        id: true,
+        bookingId: true,
+        counselorId: true,
+        outcome: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  /**
+   * Edits a previously logged call so a counselor can correct a mis-clicked
+   * outcome or refine the memo (ADR 0016). Ownership reuses the SAME boundary as
+   * logCall/the brief (`assertBookingOwnedByCounselor`) — no new auth surface
+   * (P2) — and the CallLog must belong to that booking (else 404), closing the
+   * cross-booking edit vector.
+   *
+   * Only `outcome` + `note` are mutable; the row's booking/counselor binding and
+   * createdAt are immutable. Like logCall this is NON-DESTRUCTIVE and loosely
+   * coupled (P5): it NEVER writes Booking.status. Editing an outcome recomputes
+   * admin analytics live (aggregates are computed on read from CallLog.outcome),
+   * so no migration/backfill is needed. Returns the same note-free receipt as
+   * logCall (containment — the note is never echoed in the response).
+   */
+  async updateCallLog(
+    counselorId: string,
+    bookingId: string,
+    callId: string,
+    dto: UpdateCallLogDto,
+  ): Promise<CallLogReceipt> {
+    await this.ownership.assertBookingOwnedByCounselor(counselorId, bookingId);
+
+    // The CallLog must exist AND belong to this booking — otherwise a counselor
+    // could edit a call from a DIFFERENT booking they happen to own (or one they
+    // do not). Scoping the existence check to bookingId closes that vector.
+    const existing = await this.prisma.callLog.findUnique({
+      where: { id: callId },
+      select: { bookingId: true },
+    });
+    if (!existing || existing.bookingId !== bookingId) {
+      throw new NotFoundException('Call log not found for this booking');
+    }
+
+    // Update `outcome` + `note` ONLY. Booking.status is never touched (P5). The
+    // returned `select` omits `note` so it is never serialized into the response
+    // (PII-adjacent containment, mirroring logCall).
+    return this.prisma.callLog.update({
+      where: { id: callId },
+      data: {
+        outcome: dto.outcome,
+        note: dto.note ?? null,
+      },
+      select: {
+        id: true,
+        bookingId: true,
+        counselorId: true,
+        outcome: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  /**
+   * Deletes a previously logged call so a counselor can remove an erroneously
+   * created entry (ADR 0016). Ownership reuses the SAME boundary as
+   * logCall/updateCallLog (`assertBookingOwnedByCounselor`) — no new auth
+   * surface (P2) — and the CallLog must belong to that booking (else 404),
+   * closing the cross-booking delete vector.
+   *
+   * NON-DESTRUCTIVE, loosely coupled (P5): NEVER writes Booking.status.
+   * Deleting a row recomputes admin analytics live (aggregates are computed on
+   * read from CallLog.outcome), so no migration/backfill is needed. Returns
+   * void — the row no longer exists.
+   */
+  async deleteCallLog(
+    counselorId: string,
+    bookingId: string,
+    callId: string,
+  ): Promise<void> {
+    await this.ownership.assertBookingOwnedByCounselor(counselorId, bookingId);
+
+    // The CallLog must exist AND belong to this booking — same vector check as
+    // updateCallLog: scoping to bookingId closes the cross-booking delete path.
+    const existing = await this.prisma.callLog.findUnique({
+      where: { id: callId },
+      select: { bookingId: true },
+    });
+    if (!existing || existing.bookingId !== bookingId) {
+      throw new NotFoundException('Call log not found for this booking');
+    }
+
+    await this.prisma.callLog.delete({ where: { id: callId } });
   }
 
   /**

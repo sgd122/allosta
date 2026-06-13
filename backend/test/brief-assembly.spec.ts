@@ -315,6 +315,124 @@ describe('Pre-consultation brief (AC-P1/AC-P2/AC-P7 marker)', () => {
     });
   });
 
+  // ── AC-1/AC-2: customer phone projection (contact surfacing, ADR 0016) ──────
+
+  describe('AC-1/AC-2: customer phone projection', () => {
+    it('AC-1: the assigned counselor brief response includes the customer plaintext phone', async () => {
+      const expectedPhone = (await prisma.customer.findUnique({
+        where: { id: islandA.customerId },
+        select: { phone: true },
+      }))!.phone;
+
+      const bookingId = await freshBooking(BookingStatus.CONFIRMED);
+
+      const res = await request(app.getHttpServer())
+        .get(`/counselor/bookings/${bookingId}/brief`)
+        .set('Authorization', `Bearer ${islandA.counselorToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.phone).toBe(expectedPhone);
+    });
+
+    it('AC-2: a foreign counselor is denied (403) and the response carries no phone', async () => {
+      const bookingId = await freshBooking(BookingStatus.CONFIRMED);
+
+      const res = await request(app.getHttpServer())
+        .get(`/counselor/bookings/${bookingId}/brief`)
+        .set('Authorization', `Bearer ${islandB.counselorToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.phone).toBeUndefined();
+    });
+
+    it('AC-2: an unauthenticated brief request is denied (401) with no phone leak', async () => {
+      const bookingId = await freshBooking(BookingStatus.CONFIRMED);
+
+      const res = await request(app.getHttpServer()).get(
+        `/counselor/bookings/${bookingId}/brief`,
+      );
+
+      expect(res.status).toBe(401);
+      expect(res.body.phone).toBeUndefined();
+    });
+  });
+
+  // ── Brief callLogs projection (CallLog list + edit, ADR 0016) ──────────────
+
+  describe('Brief includes the booking call logs (newest first)', () => {
+    it('callLogs is an empty array when no calls have been logged', async () => {
+      const bookingId = await freshBooking(BookingStatus.CONFIRMED);
+
+      const brief = await consultationService.getBookingBrief(
+        islandA.counselorId,
+        bookingId,
+      );
+
+      expect(brief.callLogs).toEqual([]);
+    });
+
+    it('callLogs surfaces logged calls newest-first with outcome, note and createdAt', async () => {
+      const bookingId = await freshBooking(BookingStatus.CONFIRMED);
+
+      // Two calls in order; the second is newer and must appear first.
+      await request(app.getHttpServer())
+        .post(`/counselor/bookings/${bookingId}/calls`)
+        .set('Authorization', `Bearer ${islandA.counselorToken}`)
+        .send({ outcome: 'NO_ANSWER', note: '1차 부재중' })
+        .expect(201);
+      // A tiny delay so createdAt strictly orders the two rows.
+      await new Promise((r) => setTimeout(r, 5));
+      await request(app.getHttpServer())
+        .post(`/counselor/bookings/${bookingId}/calls`)
+        .set('Authorization', `Bearer ${islandA.counselorToken}`)
+        .send({ outcome: 'CONNECTED', note: '2차 연결' })
+        .expect(201);
+
+      const brief = await consultationService.getBookingBrief(
+        islandA.counselorId,
+        bookingId,
+      );
+
+      expect(brief.callLogs).toHaveLength(2);
+      // Newest first.
+      expect(brief.callLogs[0].outcome).toBe('CONNECTED');
+      expect(brief.callLogs[0].note).toBe('2차 연결');
+      expect(brief.callLogs[1].outcome).toBe('NO_ANSWER');
+      expect(brief.callLogs[1].note).toBe('1차 부재중');
+      // createdAt is monotonically non-increasing.
+      const t0 = new Date(brief.callLogs[0].createdAt).getTime();
+      const t1 = new Date(brief.callLogs[1].createdAt).getTime();
+      expect(t0).toBeGreaterThanOrEqual(t1);
+      // The brief shows note to the OWNING counselor (same boundary as phone).
+      expect(brief.callLogs[0].id).toBeDefined();
+    });
+
+    it('callLogs reflects an edited outcome (analytics-consistent live read)', async () => {
+      const bookingId = await freshBooking(BookingStatus.CONFIRMED);
+      const created = await request(app.getHttpServer())
+        .post(`/counselor/bookings/${bookingId}/calls`)
+        .set('Authorization', `Bearer ${islandA.counselorToken}`)
+        .send({ outcome: 'NO_ANSWER' })
+        .expect(201);
+      const callId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .patch(`/counselor/bookings/${bookingId}/calls/${callId}`)
+        .set('Authorization', `Bearer ${islandA.counselorToken}`)
+        .send({ outcome: 'CONNECTED', note: '정정' })
+        .expect(200);
+
+      const brief = await consultationService.getBookingBrief(
+        islandA.counselorId,
+        bookingId,
+      );
+      const edited = brief.callLogs.find((c) => c.id === callId);
+      expect(edited).toBeDefined();
+      expect(edited!.outcome).toBe('CONNECTED');
+      expect(edited!.note).toBe('정정');
+    });
+  });
+
   // ── AC-P7 marker (M3): briefOpenedAt idempotency ───────────────────────────
 
   describe('AC-P7 marker: briefOpenedAt idempotency (M3)', () => {

@@ -66,6 +66,17 @@ enum Outcome {
   PURCHASED
 }
 
+// Call attempt result for CallLog (contact-surfacing evidence layer, ADR 0016).
+// CONNECTED = reached the customer; NO_ANSWER = dialed, no pickup; INVALID =
+// number unreachable/wrong. Structured enum (never free text) so the attempt is
+// aggregatable without surfacing the call note. CallLog is loosely coupled to
+// attendance: it is evidence only and NEVER writes Booking.status.
+enum CallOutcome {
+  CONNECTED
+  NO_ANSWER
+  INVALID
+}
+
 enum ConsultationActionType {
   METRIC_EXPLAINED
   DIET_GUIDANCE
@@ -133,6 +144,7 @@ model Counselor {
   slots       AvailabilitySlot[]
   records     ConsultationRecord[]
   enrollments ChallengeEnrollment[]
+  callLogs    CallLog[]
 }
 
 model AvailabilitySlot {
@@ -196,6 +208,9 @@ model Booking {
   // conduct the UPCOMING consultation, keyed by bookingId @unique. Distinct from
   // any post-consultation artifact — generated/refreshed lazily on brief open.
   aiGuidance    ConsultationBriefGuidance?
+  // Call attempt evidence (ADR 0016). Loosely coupled — logging a call never
+  // mutates this booking's status (P5); attendance stays single-source-of-truth.
+  callLogs      CallLog[]
 
   @@index([slotId])
   @@index([customerId])
@@ -219,6 +234,29 @@ model ConsultationRecord {
   metrics     ConsultationRecordMetric[]
   enrollments ChallengeEnrollment[]
 
+  @@index([counselorId])
+}
+
+// Call attempt evidence (contact-surfacing, ADR 0016). A counselor records each
+// click-to-call attempt against the booking so a no-show override has evidence.
+// NON-DESTRUCTIVE & loosely coupled (P1/P5): creating a CallLog NEVER writes
+// Booking.status — attendance remains single-source-of-truth on Booking, mutated
+// only by PATCH /bookings/:id/attendance. `outcome` is a forced enum (no free
+// text classification). `note` is an optional short memo, length-bounded at the
+// DTO layer like Booking.concern; it is PII-adjacent and never logged or surfaced
+// in any admin aggregation (aggregations read `outcome` only).
+model CallLog {
+  id          String      @id @default(cuid())
+  bookingId   String
+  counselorId String
+  outcome     CallOutcome
+  note        String?
+  createdAt   DateTime    @default(now())
+
+  booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  counselor Counselor @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
   @@index([counselorId])
 }
 
