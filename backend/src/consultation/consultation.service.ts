@@ -758,6 +758,13 @@ export class ConsultationService {
     // Update `outcome` + `note` ONLY. Booking.status is never touched (P5). The
     // returned `select` omits `note` so it is never serialized into the response
     // (PII-adjacent containment, mirroring logCall).
+    //
+    // FULL-REPLACE semantics by design (ADR 0016, asserted in call-log.spec.ts
+    // "clearing the note (omitting it) persists null"): the edit form reuses the
+    // create form and OMITS `note` from the payload when the field is blank
+    // (CallLogSection.tsx: `...(note.trim() ? { note } : {})`). So an absent
+    // `note` is the UI's way of CLEARING the memo — `dto.note ?? null` must
+    // collapse it to null, NOT preserve the prior value.
     return this.prisma.callLog.update({
       where: { id: callId },
       data: {
@@ -795,15 +802,16 @@ export class ConsultationService {
 
     // The CallLog must exist AND belong to this booking — same vector check as
     // updateCallLog: scoping to bookingId closes the cross-booking delete path.
-    const existing = await this.prisma.callLog.findUnique({
-      where: { id: callId },
-      select: { bookingId: true },
+    // `deleteMany` does this in a SINGLE atomic query (no findUnique-then-delete
+    // race window): the `{ id, bookingId }` filter only matches a row this
+    // booking owns, and `count === 0` means it did not exist or belonged to
+    // another booking — both surface as 404.
+    const result = await this.prisma.callLog.deleteMany({
+      where: { id: callId, bookingId },
     });
-    if (!existing || existing.bookingId !== bookingId) {
+    if (result.count === 0) {
       throw new NotFoundException('Call log not found for this booking');
     }
-
-    await this.prisma.callLog.delete({ where: { id: callId } });
   }
 
   /**
