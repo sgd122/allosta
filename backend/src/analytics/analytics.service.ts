@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BookingStatus, Outcome, Prisma } from '@prisma/client';
+import { BookingStatus, CallOutcome, Outcome, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AnalyticsDashboard,
@@ -7,6 +7,7 @@ import {
   AnalyticsRecordRow,
   AnalyticsRecordsList,
   BookingFunnel,
+  CallOutcomeDistribution,
   MetricConversionItem,
   OutcomeDistribution,
   ProductInterestItem,
@@ -27,6 +28,9 @@ export class AnalyticsService {
       challengeEnrollments,
       challengeConversionRate,
       briefOpenRate,
+      contactAttempts,
+      callOutcomeGroups,
+      noShowWithoutContactRate,
     ] = await Promise.all([
       this.countTotalRecords(counselorId),
       this.groupByOutcome(counselorId),
@@ -37,9 +41,14 @@ export class AnalyticsService {
       this.countChallengeEnrollments(counselorId),
       this.computeChallengeConversion(counselorId),
       this.computeBriefOpenRate(counselorId),
+      this.countContactAttempts(counselorId),
+      this.groupByCallOutcome(counselorId),
+      this.computeNoShowWithoutContactRate(counselorId),
     ]);
 
     const outcomeDistribution = this.buildOutcomeDistribution(outcomeGroups);
+    const callOutcomeDistribution =
+      this.buildCallOutcomeDistribution(callOutcomeGroups);
     const purchasedCount = outcomeDistribution.PURCHASED;
     const conversionRate =
       totalRecords > 0 ? purchasedCount / totalRecords : 0;
@@ -60,6 +69,9 @@ export class AnalyticsService {
       challengeEnrollments,
       challengeConversionRate,
       briefOpenRate,
+      contactAttempts,
+      callOutcomeDistribution,
+      noShowWithoutContactRate,
     };
   }
 
@@ -70,7 +82,10 @@ export class AnalyticsService {
         booking: {
           include: {
             slot: true,
-            customer: true,
+            // PII narrowing (ADR 0016): only the display name is needed here.
+            // Selecting the full Customer row would load phone (plain-text PII)
+            // into memory; phone must surface ONLY in the counselor brief.
+            customer: { select: { name: true } },
           },
         },
         counselor: true,
@@ -105,7 +120,10 @@ export class AnalyticsService {
         take: limit,
         orderBy: { booking: { slot: { startAt: 'desc' } } },
         include: {
-          booking: { include: { slot: true, customer: true } },
+          // PII narrowing (ADR 0016): only the customer display name is needed
+          // for the list row — never the phone (plain-text PII lives only in the
+          // counselor brief).
+          booking: { include: { slot: true, customer: { select: { name: true } } } },
           counselor: true,
         },
       }),
@@ -392,5 +410,84 @@ export class AnalyticsService {
     ]);
 
     return denominator > 0 ? numerator / denominator : 0;
+  }
+
+  // ── Contact-logging analytics (AC-6, ADR 0016) ──────────────────────────────
+
+  /**
+   * Total contact attempts (CallLog rows), scoped via booking.slot.counselorId
+   * (AC-6). [P2] The scope key is the SLOT owner via relation filter — NOT the
+   * denormalised CallLog.counselorId column in isolation (the anti-pattern this
+   * service explicitly warns against, see countChallengeEnrollments) — mirroring
+   * groupBookingFunnel / computeBriefOpenRate.
+   */
+  private async countContactAttempts(counselorId?: string): Promise<number> {
+    return this.prisma.callLog.count({
+      where: counselorId ? { booking: { slot: { counselorId } } } : undefined,
+    });
+  }
+
+  /**
+   * CallLog rows grouped by outcome, scoped via booking.slot.counselorId (AC-6).
+   * Reads `outcome` only — the PII-adjacent call `note` is never read here.
+   */
+  private async groupByCallOutcome(counselorId?: string) {
+    return this.prisma.callLog.groupBy({
+      by: ['outcome'],
+      where: counselorId ? { booking: { slot: { counselorId } } } : undefined,
+      _count: { outcome: true },
+      orderBy: { outcome: 'asc' },
+    });
+  }
+
+  private buildCallOutcomeDistribution(
+    groups: { outcome: CallOutcome; _count: { outcome: number } }[],
+  ): CallOutcomeDistribution {
+    const dist: CallOutcomeDistribution = {
+      CONNECTED: 0,
+      NO_ANSWER: 0,
+      INVALID: 0,
+    };
+    for (const g of groups) {
+      dist[g.outcome] = g._count.outcome;
+    }
+    return dist;
+  }
+
+  /**
+   * Self-reported no-contact rate for NO_SHOW bookings (AC-6).
+   *   numerator   = NO_SHOW bookings with zero CallLogs (callLogs: { none: {} })
+   *   denominator = all NO_SHOW bookings
+   *   scope       = slot.counselorId relation (own/all toggle), mirroring
+   *                 groupBookingFunnel. Numerator AND denominator use the SAME
+   *                 relation key so there is no silent-equivalence dependency.
+   *
+   * Returns `null` when the denominator is 0 (no NO_SHOW bookings yet) and `0`
+   * when every NO_SHOW has at least one CallLog — distinguishing "no data" from
+   * "all contacted", mirroring computeChallengeConversion. This is the
+   * *self-reported* rate (whether a call was logged), not actual contact.
+   */
+  private async computeNoShowWithoutContactRate(
+    counselorId?: string,
+  ): Promise<number | null> {
+    const scopeWhere = counselorId ? { slot: { counselorId } } : undefined;
+
+    const [denominator, numerator] = await Promise.all([
+      this.prisma.booking.count({
+        where: {
+          ...scopeWhere,
+          status: BookingStatus.NO_SHOW,
+        },
+      }),
+      this.prisma.booking.count({
+        where: {
+          ...scopeWhere,
+          status: BookingStatus.NO_SHOW,
+          callLogs: { none: {} },
+        },
+      }),
+    ]);
+
+    return denominator > 0 ? numerator / denominator : null;
   }
 }

@@ -1,5 +1,6 @@
 import {
   BookingStatus,
+  CallOutcome,
   ConsultationActionType,
   FamilyLinkStatus,
   Outcome,
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   await prisma.consultationRecordProduct.deleteMany();
   await prisma.consultationRecord.deleteMany();
   await prisma.notification.deleteMany();
+  await prisma.callLog.deleteMany();
   await prisma.booking.deleteMany();
   await prisma.availabilitySlot.deleteMany();
   await prisma.testResult.deleteMany();
@@ -414,11 +416,77 @@ async function main(): Promise<void> {
     },
   });
 
+  // ---- CallLog demo rows + no-show bookings (contact-surfacing evidence layer) ----
+  // Seed intent: counselor's island → noShowWithoutContactRate = 0.5
+  //   - noShowBookingA: NO_SHOW + NO_ANSWER CallLog   → contacted   (0 uncontacted)
+  //   - noShowBookingB: NO_SHOW + no CallLog (intentional) → uncontacted (1 uncontacted)
+  //   → 1 uncontacted / 2 NO_SHOW total = 0.5  (AC-6 island A pattern)
+  await prisma.callLog.create({
+    data: {
+      bookingId: demoBooking.id,
+      counselorId: counselor.id,
+      outcome: CallOutcome.CONNECTED,
+      note: '통화 연결 — 예약 확인 완료.',
+    },
+  });
+
+  const noShowSlotA = await prisma.availabilitySlot.create({
+    data: {
+      counselorId: counselor.id,
+      startAt: minutes(-300),
+      endAt: minutes(-270),
+      isOpen: false,
+    },
+  });
+  const noShowBookingA = await prisma.booking.create({
+    data: {
+      slotId: noShowSlotA.id,
+      customerId: customer.id,
+      subjectType: SubjectType.CUSTOMER,
+      subjectId: customer.id,
+      testResultId: metabolicResult.id,
+      status: BookingStatus.NO_SHOW,
+      slotStartAt: noShowSlotA.startAt,
+      slotEndAt: noShowSlotA.endAt,
+    },
+  });
+  await prisma.callLog.create({
+    data: {
+      bookingId: noShowBookingA.id,
+      counselorId: counselor.id,
+      outcome: CallOutcome.NO_ANSWER,
+      note: '2회 시도 무응답.',
+    },
+  });
+
+  const noShowSlotB = await prisma.availabilitySlot.create({
+    data: {
+      counselorId: counselor.id,
+      startAt: minutes(-240),
+      endAt: minutes(-210),
+      isOpen: false,
+    },
+  });
+  await prisma.booking.create({
+    data: {
+      slotId: noShowSlotB.id,
+      customerId: customer.id,
+      subjectType: SubjectType.CUSTOMER,
+      subjectId: customer.id,
+      testResultId: metabolicResult.id,
+      status: BookingStatus.NO_SHOW,
+      slotStartAt: noShowSlotB.startAt,
+      slotEndAt: noShowSlotB.endAt,
+    },
+  });
+  // No CallLog for noShowBookingB — intentional: 1/2 NO_SHOW uncontacted → noShowWithoutContactRate = 0.5
+
   const testResultCount = await prisma.testResult.count();
   const slotCount = await prisma.availabilitySlot.count();
   const productCount = await prisma.product.count();
   const challengeCount = await prisma.challenge.count();
   const enrollmentCount = await prisma.challengeEnrollment.count();
+  const callLogCount = await prisma.callLog.count();
 
   // eslint-disable-next-line no-console
   console.log('Seed complete:', {
@@ -441,6 +509,7 @@ async function main(): Promise<void> {
     challengeCount,
     challengeEnrollmentCount: enrollmentCount,
     slotCount,
+    callLogCount,
   });
 }
 

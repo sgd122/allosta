@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -18,6 +19,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/interfaces/jwt-payload.interface';
 import {
   BookingBrief,
+  CallLogReceipt,
   ChallengeCatalogItem,
   ConsultationRecordWithRelations,
   ConsultationService,
@@ -30,6 +32,7 @@ import {
   CreateConsultationRecordDto,
   UpdateConsultationRecordDto,
 } from './dto/create-consultation-record.dto';
+import { LogCallDto, UpdateCallLogDto } from './dto/log-call.dto';
 
 @ApiTags('consultation')
 @ApiBearerAuth()
@@ -79,6 +82,51 @@ export class ConsultationController {
     return this.consultationService.getBookingBrief(
       user.counselorId!,
       bookingId,
+    );
+  }
+
+  @Post('counselor/bookings/:bookingId/calls')
+  @Roles(Role.COUNSELOR)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Log a click-to-call attempt as no-show evidence (ADR 0016); never mutates booking status' })
+  logCall(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('bookingId') bookingId: string,
+    @Body() dto: LogCallDto,
+  ): Promise<CallLogReceipt> {
+    return this.consultationService.logCall(user.counselorId!, bookingId, dto);
+  }
+
+  @Patch('counselor/bookings/:bookingId/calls/:callId')
+  @Roles(Role.COUNSELOR)
+  @ApiOperation({ summary: 'Edit a logged call attempt (correct outcome/note); never mutates booking status (ADR 0016)' })
+  updateCallLog(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('bookingId') bookingId: string,
+    @Param('callId') callId: string,
+    @Body() dto: UpdateCallLogDto,
+  ): Promise<CallLogReceipt> {
+    return this.consultationService.updateCallLog(
+      user.counselorId!,
+      bookingId,
+      callId,
+      dto,
+    );
+  }
+
+  @Delete('counselor/bookings/:bookingId/calls/:callId')
+  @Roles(Role.COUNSELOR)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a logged call attempt; never mutates booking status (ADR 0016)' })
+  async deleteCallLog(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('bookingId') bookingId: string,
+    @Param('callId') callId: string,
+  ): Promise<void> {
+    await this.consultationService.deleteCallLog(
+      user.counselorId!,
+      bookingId,
+      callId,
     );
   }
 

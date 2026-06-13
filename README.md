@@ -83,6 +83,7 @@ NestJS (:3000) ──Prisma──▶ PostgreSQL (:5432, docker)
   - **고객 concern**: 예약 생성 시 선택적 사전질문(`@MaxLength(1000)`). 브리핑에만 기록하고 고객 API로 반환하지 않는다(write-only).
   - **상담 전 AI 가이던스 생명주기**: 다가오는 상담을 어떻게 진행할지에 대한 가이던스를 예약 단위 `ConsultationBriefGuidance`(bookingId-keyed, `Booking` 1:1 cascade)에 보관한다(사후 요약 아님). 브리핑을 열면 `GuidanceService.ensureFallbackForBooking`이 결정론 템플릿 가이던스를 `status=FALLBACK`으로 보장한다(Ollama 의존 없음, `createRecord`는 가이던스를 건드리지 않음). OpsScheduler `@Interval` `sweepPendingUpgrades()`가 `status=FALLBACK` 행만 Ollama로 업그레이드 → `UPGRADED`로만 업서트(절대 downgrade 없음, 멱등, 수동 트리거 없음).
   - **Ollama 옵트인**: Ollama 없이도 golden path는 항상 통과(FALLBACK이 기본). Ollama 설치 후 `ollama pull gemma4:e4b`를 실행하면 ~1 스윕 사이클 내에 가이던스가 자동으로 UPGRADED로 교체된다(별도 버튼·수동 트리거 불요). 환경 변수 미설정 시 기본값(`OLLAMA_BASE_URL=http://localhost:11434`, `SUMMARY_MODEL=gemma4:e4b`) 사용, startup assertion 없음.
+  - **통화 시도 증거 레이어 (CallLog, ADR 0016)**: 브리핑에 고객 `phone`을 click-to-call(`tel:`)로 노출하고, `POST /counselor/bookings/:bookingId/calls`로 통화 시도(`{ outcome, note? }`)를 기록한다(생성 응답은 `note` 비노출). 브리핑 응답의 `callLogs`(최신순, `note` 포함 — `phone`과 동일 소유권 경계)로 통화 이력을 조회하고, `PATCH /counselor/bookings/:bookingId/calls/:callId`로 잘못 클릭한 outcome 정정·메모 수정이 가능하다(생성 폼 재사용, 다른 예약 소속/없는 callId `404`). `DELETE /counselor/bookings/:bookingId/calls/:callId`로 잘못 생성된 항목을 삭제할 수 있다(동일 소유권 경계, 다른 예약 소속/없는 callId `404`). 생성·편집·삭제 모두 `Booking.status`를 건드리지 않으며(P5), 삭제 후 집계는 read-time 재계산이라 Analytics에 즉시 반영(마이그레이션·백필 없음).
   - **Analytics**: `briefOpenRate`(분모=CONFIRMED+COMPLETED+NO_SHOW)를 headline 생산성 지표로 유지. 기존 scope 토글 준수.
 - **프론트엔드**: Next.js 14 App Router. JWT는 httpOnly 쿠키에 격리 — 클라이언트 JS 미노출. **서버측 접근제어**: `src/middleware.ts`가 보호 라우트 그룹 진입 전 쿠키 JWT의 서명+만료를 `jose`(HS256, 백엔드와 동일 `JWT_SECRET`)로 검증한다 — 백엔드 RBAC+소유권과 함께 방어 심층화(ADR 0010).
 - **프론트엔드 스타일·상태·데이터(ADR 0011)**: **Tailwind를 Radix Themes 위에 레이어링** — 색/반경을 Radix 런타임 CSS 변수에 매핑(`text-teal-11` → `var(--teal-11)`, 값 중복 0·테마 자동 추종), preflight OFF, 반복 토큰은 `shared/ui` 프리미티브(`Eyebrow`·`StatNumber`·`Meter`)로 통일. 상태는 **서버=TanStack Query / 클라이언트=Jotai**. 데이터 패칭 훅은 entity별 `api/queries.ts`(queryKey 팩토리 + `useX()`/`useXMutation()`)로 모으고 뷰는 인라인 `useQuery` 대신 슬라이스 훅을 소비.
@@ -212,6 +213,8 @@ pnpm exec jest --config ./test/jest-e2e.json --runInBand
 | `analytics-ops.spec.ts`            | 운영 퍼널(booked/confirmed/completed/noShow/cancelled) + noShowRate·slotUtilization 집계                                                    | AC-A1                                |
 | `availability.crud.spec.ts`        | 슬롯 생성/수정/삭제(상담사 본인 + 관리자 전체), 겹침 가드, 활성 예약 삭제 가드                                                              | AC-S1, AC-S2, AC-S3, AC-S4, AC-S5    |
 | `availability.aggregation.spec.ts` | availability-calendar 시간대 집계(availableCount), 파생 가용성 규칙                                                                         | AC8                                  |
+| `analytics-contact.spec.ts`        | CallLog contactAttempts·callOutcomeDistribution·noShowWithoutContactRate 집계 (island A=0.5 / B=0 / C=null 패턴)                             | AC-6 (AC-L3)                         |
+| `call-log.spec.ts`                 | `POST .../calls` 생성·소유권(403)·없음(404) + `PATCH .../calls/:callId` 편집·소유권·교차예약(404)·status 불변 + `DELETE .../calls/:callId` 삭제·소유권(403)·교차예약(404)·status 불변 | AC-L1, AC-L2, AC-L5                  |
 
 > 브라우저 E2E(Playwright)는 의도적으로 제외했습니다(설계문서 중심 과제에서 setup 비용↑·신호↓).
 > 골든패스 증명은 백엔드 통합 테스트 + 본 README 워크스루로 대체합니다.
@@ -228,16 +231,17 @@ allosta/
 │   ├── 02-requirements.md
 │   ├── 03-mvp-scope.md
 │   ├── 04-system-design.md
-│   └── 05-adr/                     # ADR 0001~0014
+│   └── 05-adr/                     # ADR 0001~0016
 ├── backend/                        # NestJS + Prisma
 │   ├── prisma/
 │   │   ├── schema.prisma
 │   │   ├── migrations/             # init · partial_unique · add_family_link · pending_completed ·
 │   │   │                           # booking_pending_first · rename_outcome_states ·
 │   │   │                           # symmetric_family_link · ops_enum_add ·
-│   │   │                           # add_challenge · structured_consultation_record
+│   │   │                           # add_challenge · structured_consultation_record · add_call_log
 │   │   └── seed.ts                 # 슬롯 그리드 (2026 Jun–Aug, Mon–Fri, 09–18) + ACCEPTED FamilyLink +
-│   │                               # BioCom 7종 TestResult(참조범위/상태) + 상품 + 챌린지 카탈로그 + 데모 등록
+│   │                               # BioCom 7종 TestResult(참조범위/상태) + 상품 + 챌린지 카탈로그 + 데모 등록 +
+│   │                               # CallLog 데모 행(CONNECTED·NO_ANSWER) + NO_SHOW 예약 2건(noShowWithoutContactRate=0.5 검증용)
 │   ├── src/
 │   │   ├── auth/                   # JWT Strategy, RolesGuard
 │   │   ├── common/                 # ownership service, decorators
@@ -246,8 +250,8 @@ allosta/
 │   │   ├── family/                 # 대칭형 FamilyLink 초대 코드
 │   │   ├── consultation/           # 구조화 기록, metricRefs, 챌린지 카탈로그/등록 (createRecord 원자)
 │   │   │   ├── guidance/           # GuidanceModule — TemplateGuidance, OllamaGuidance, GuidanceService
-│   │   │   └── brief (getBookingBrief — 결정론 조립, briefOpenedAt 멱등 기록 + FALLBACK 가이던스 보장)
-│   │   ├── analytics/              # 전환 집계, scope 토글, 운영 퍼널/지표, 챌린지 등록 수/전환율, briefOpenRate
+│   │   │   └── brief (getBookingBrief — 결정론 조립, briefOpenedAt 멱등 기록 + FALLBACK 가이던스 보장 + callLogs 최신순) · calls(POST 생성 / PATCH :callId 편집)
+│   │   ├── analytics/              # 전환 집계, scope 토글, 운영 퍼널/지표, 챌린지 등록 수/전환율, briefOpenRate, CallLog 집계(contactAttempts·callOutcomeDistribution·noShowWithoutContactRate)
 │   │   ├── test-result/            # seed + read-only, /my 엔드포인트 (BioCom 7종 + 참조범위/상태)
 │   │   ├── common/constants/       # SERVICE_TYPES 공유 상수 (BioCom 7종 코드)
 │   │   ├── ops-scheduler/          # @Interval 타이밍 래퍼 (sweepNoShows / sweepStalePending / sweepPendingUpgrades)
@@ -269,7 +273,9 @@ allosta/
 │       ├── challenge-enrollment.spec.ts      # BioCom: 챌린지 등록(원자·소유권·404·@@unique)
 │       ├── analytics-challenge.spec.ts       # BioCom: 챌린지 등록 수/전환율(record JOIN 범위)
 │       ├── test-result-metrics.spec.ts       # BioCom: 지표 참조범위/상태 노출
-│       └── cascade-cleanup.spec.ts           # BioCom: cleanupSeeded cascade 무orphan
+│       ├── cascade-cleanup.spec.ts           # BioCom: cleanupSeeded cascade 무orphan
+│       ├── analytics-contact.spec.ts         # CallLog 집계(contactAttempts·callOutcomeDistribution·noShowWithoutContactRate) + island 패턴
+│       └── call-log.spec.ts                  # POST /counselor/bookings/:bookingId/calls 생성·소유권·404
 └── frontend/                       # Next.js 14 App Router · FSD(ADR 0009, types/constants 세그먼트 0012) · Tailwind on Radix + Jotai(ADR 0011)
     ├── tailwind.config.ts          # 색/반경을 Radix 런타임 CSS 변수에 매핑 · preflight OFF (ADR 0011)
     └── src/
@@ -305,3 +311,4 @@ allosta/
 | `structured_consultation_record`              | 상담 기록을 구조화 — `notes` 단일 필드를 `summary`/`recommendation`/`followUp` 3슬롯으로 분리하고 `ConsultationActionType` 체크리스트(`actions[]`) 추가. 상담사 간 기록 일관성 강제 + 상담행위별 전환 분석 가능.                                                                                                                                                                                                                                    |
 | `20260612120000_ai_pre_consultation_guidance` | **상담 전 AI 가이던스** — `Booking.concern String?`(고객 사전질문, write-only) + `Booking.briefOpenedAt DateTime?`(브리핑 최초 열람 시각) 추가. `ConsultationBriefGuidance`(`id, bookingId @unique, status BriefGuidanceStatus @default(FALLBACK), model String?, content, createdAt, updatedAt`) 신규 모델 + `BriefGuidanceStatus { FALLBACK UPGRADED }` enum + `Booking` 1:1 `onDelete: Cascade` 관계. 다가오는 상담 진행 안내를 예약 단위로 보관(사후 요약 아님). 순수 additive — 기존 테이블 ALTER 없음. |
 | `20260612140000_customer_no_overlap`          | **고객 시간대 중복 방지** — `btree_gist` 확장 + `Booking.slotStartAt/slotEndAt`(비정규화 슬롯 윈도우, 백필 후 NOT NULL) 추가 + GiST `EXCLUDE` 제약 `booking_customer_no_overlap`(`customerId WITH =`, `tsrange(slotStartAt,slotEndAt) WITH &&`, `WHERE status IN ('PENDING','CONFIRMED')`). 한 고객이 겹치는 시간대에 복수 활성 예약을 갖지 못하도록 DB 레벨 강제(ADR 0015). |
+| `20260613043835_add_call_log`                 | **통화 시도 증거 레이어** — `CallOutcome` enum(CONNECTED/NO_ANSWER/INVALID) + `CallLog` 모델(bookingId FK, counselorId FK, outcome, note?, createdAt, 두 인덱스 `@@index([bookingId])·@@index([counselorId])`, Cascade 삭제) 추가. `Customer.phone`은 기존 필드 — 브리핑 투영만 추가(스키마 무변경). 순수 additive — 기존 테이블 ALTER 없음(ADR 0016). |

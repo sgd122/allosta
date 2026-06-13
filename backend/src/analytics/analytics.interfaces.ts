@@ -17,6 +17,15 @@ export interface OutcomeDistribution {
   PURCHASED: number;
 }
 
+export interface CallOutcomeDistribution {
+  /** Reached the customer. */
+  CONNECTED: number;
+  /** Dialed, no pickup. */
+  NO_ANSWER: number;
+  /** Number unreachable / wrong. */
+  INVALID: number;
+}
+
 export interface BookingFunnel {
   /** PENDING bookings — customer booked, awaiting counselor confirmation. */
   booked: number;
@@ -67,6 +76,36 @@ export interface AnalyticsDashboard {
    * denominator is zero.
    */
   briefOpenRate: number;
+  /**
+   * Total CallLog rows (contact attempts), scoped via booking.slot.counselorId
+   * (AC-6). Counts every logged dial regardless of outcome. The scope key is the
+   * SLOT owner via relation filter — NOT the denormalised CallLog.counselorId in
+   * isolation — mirroring groupBookingFunnel.
+   */
+  contactAttempts: number;
+  /**
+   * CallLog rows grouped by outcome (CONNECTED | NO_ANSWER | INVALID), scoped via
+   * booking.slot.counselorId (AC-6). Reads `outcome` only — the call `note` is
+   * PII-adjacent and never surfaced in any aggregation (ADR 0016).
+   */
+  callOutcomeDistribution: CallOutcomeDistribution;
+  /**
+   * Fraction of NO_SHOW bookings with NO logged contact attempt (AC-6).
+   *   numerator   = NO_SHOW bookings with zero CallLogs
+   *   denominator = all NO_SHOW bookings
+   *   scope       = slot.counselorId relation (own/all toggle), numerator AND
+   *                 denominator share the same key (no silent-equivalence).
+   *
+   * HONESTY: this is the *self-reported* no-contact rate — it reflects whether a
+   * counselor LOGGED a call, not whether contact actually occurred (a counselor
+   * may dial without logging). It is gameable, but strictly more useful than zero
+   * evidence when justifying a no-show override (ADR 0016).
+   *
+   * `null` when there are no NO_SHOW bookings yet (denominator 0); `0` when every
+   * NO_SHOW has at least one CallLog. Distinguishes "no data" from "all
+   * contacted", mirroring challengeConversionRate's null-vs-0 convention above.
+   */
+  noShowWithoutContactRate: number | null;
 }
 
 export interface AnalyticsRecordRow {
