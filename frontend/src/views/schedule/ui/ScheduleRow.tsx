@@ -219,39 +219,38 @@ export function ScheduleRow({ entry, index, isOpen, onToggle, onRecorded, existi
       )}
 
       {isOpen && (
-        <Box>
+        <Box pt="4">
+          <Separator size="4" mb="4" />
+          {/* Brief context (사전 브리핑·검사 지표·통화 기록) stays visible whenever
+              the row is expanded, regardless of whether a record exists. */}
+          <Box mb="5">
+            <BriefPanel bookingId={entry.bookingId} active={isOpen} />
+          </Box>
+          {/* Record section below the brief: edit/detail for completed bookings,
+              otherwise the create form. */}
           {entry.hasRecord && existingRecord ? (
             editing ? (
-              <Box pt="4">
-                <Separator size="4" mb="4" />
-                <ConsultationRecordForm
-                  bookingId={entry.bookingId}
-                  mode="edit"
-                  recordId={existingRecord.id}
-                  initial={{
-                    summary: existingRecord.summary,
-                    recommendation: existingRecord.recommendation,
-                    followUp: existingRecord.followUp,
-                    actions: existingRecord.actions,
-                    outcome: existingRecord.outcome,
-                    productIds: existingRecord.products.map((p) => p.productId),
-                    metricRefs: existingRecord.metrics,
-                  }}
-                  onSuccess={() => setEditing(false)}
-                  onCancel={() => setEditing(false)}
-                />
-              </Box>
+              <ConsultationRecordForm
+                bookingId={entry.bookingId}
+                mode="edit"
+                recordId={existingRecord.id}
+                initial={{
+                  summary: existingRecord.summary,
+                  recommendation: existingRecord.recommendation,
+                  followUp: existingRecord.followUp,
+                  actions: existingRecord.actions,
+                  outcome: existingRecord.outcome,
+                  productIds: existingRecord.products.map((p) => p.productId),
+                  metricRefs: existingRecord.metrics,
+                }}
+                onSuccess={() => setEditing(false)}
+                onCancel={() => setEditing(false)}
+              />
             ) : (
               <RecordDetailPanel record={existingRecord} onEdit={() => setEditing(true)} />
             )
           ) : (
-            <Box pt="4">
-              <Separator size="4" mb="4" />
-              <Box mb="5">
-                <BriefPanel bookingId={entry.bookingId} active={isOpen} />
-              </Box>
-              <ConsultationRecordForm bookingId={entry.bookingId} onSuccess={onRecorded} />
-            </Box>
+            <ConsultationRecordForm bookingId={entry.bookingId} onSuccess={onRecorded} />
           )}
         </Box>
       )}

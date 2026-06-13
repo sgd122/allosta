@@ -1,10 +1,11 @@
 'use client';
 
-import { Badge, Box, Callout, Card, Flex, Separator, Spinner, Text } from '@radix-ui/themes';
+import { Badge, Box, Callout, Card, Flex, Link, Spinner, Text } from '@radix-ui/themes';
 import {
   ChatBubbleIcon,
   ExclamationTriangleIcon,
   MagicWandIcon,
+  MobileIcon,
   PersonIcon,
 } from '@radix-ui/react-icons';
 import {
@@ -16,6 +17,8 @@ import { formatDay } from '@/shared/lib/format';
 import { Eyebrow, FieldLabel } from '@/shared/ui';
 import { BRIEF_OUTCOME_LABEL } from '../constants';
 import { BriefIndicatorTable } from './BriefIndicatorTable';
+import { CallLogSection } from './CallLogSection';
+import { GuidanceMarkdown } from './GuidanceMarkdown';
 
 type Props = {
   bookingId: string;
@@ -68,6 +71,18 @@ export function BriefPanel({ bookingId, active }: Props) {
         )}
       </Flex>
 
+      <Flex align="center" gap="2" mb="4">
+        <MobileIcon className="text-gray-11 shrink-0" />
+        <Link
+          href={`tel:${data.phone}`}
+          size="2"
+          className="font-mono"
+          aria-label={`고객에게 전화하기: ${data.phone}`}
+        >
+          {data.phone}
+        </Link>
+      </Flex>
+
       {data.concern && (
         <Callout.Root color="teal" size="1" mb="4">
           <Callout.Icon><ChatBubbleIcon /></Callout.Icon>
@@ -95,9 +110,7 @@ export function BriefPanel({ bookingId, active }: Props) {
               <Badge color="gray" variant="soft" size="1">기본 가이드</Badge>
             )}
           </Flex>
-          <Text size="2" as="p" className="whitespace-pre-line text-violet-12">
-            {data.guidance.content}
-          </Text>
+          <GuidanceMarkdown content={data.guidance.content} />
         </Card>
       )}
 
@@ -143,7 +156,7 @@ export function BriefPanel({ bookingId, active }: Props) {
         )}
       </Box>
 
-      <Separator size="4" mt="4" />
+      <CallLogSection bookingId={bookingId} callLogs={data.callLogs} />
     </Box>
   );
 }

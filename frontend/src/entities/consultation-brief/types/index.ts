@@ -1,4 +1,5 @@
 import type { SubjectType, Outcome } from '@/shared/config';
+import type { CallOutcome } from '@/entities/call-log';
 
 /**
  * A single interpreted indicator surfaced in the pre-consultation brief.
@@ -32,6 +33,19 @@ export interface BriefFamilyContext {
 }
 
 /**
+ * One previously logged call attempt surfaced in the brief (newest first, ADR
+ * 0016). Mirrors the backend `BriefCallLog`. Unlike the creation receipt this
+ * carries `note` — the brief is shown only to the assigned counselor inside the
+ * same ownership boundary as `phone`, so the memo is visible for review/edit.
+ */
+export interface BriefCallLogRecord {
+  id: string;
+  outcome: CallOutcome;
+  note: string | null;
+  createdAt: string;
+}
+
+/**
  * AI-generated guidance for the *upcoming* consultation, surfaced in the
  * counselor's pre-consultation brief. FALLBACK is deterministic template
  * guidance (ensured on open); UPGRADED is local gemma. `model` is the model
@@ -56,10 +70,22 @@ export interface BookingBrief {
   subjectType: SubjectType;
   subjectId: string;
   subjectName: string;
+  /**
+   * Applicant customer's phone, surfaced PLAINTEXT for click-to-call (ADR 0016).
+   * Exposed only inside the existing brief ownership boundary — never in schedule
+   * list, analytics, or logs.
+   */
+  phone: string;
   concern: string | null;
   indicators: BriefIndicator[];
   pastRecords: BriefPastRecord[];
   family: BriefFamilyContext[];
+  /**
+   * The booking's logged call attempts (newest first, ADR 0016). Surfaced inside
+   * the same ownership boundary as `phone` so the assigned counselor can review
+   * and edit what they logged. Empty when no calls have been logged.
+   */
+  callLogs: BriefCallLogRecord[];
   /**
    * AI suggested approach for the upcoming consultation. Null only when the
    * booking is unloadable; otherwise always present (FALLBACK guaranteed).

@@ -2,7 +2,7 @@
 
 Allosta 상담 예약·전환 분석 플랫폼의 프론트엔드 애플리케이션.
 
-**스택:** Next.js 14 (App Router) · React 18 · TypeScript · TanStack Query v5 · Radix Themes · recharts
+**스택:** Next.js 14 (App Router) · React 18 · TypeScript · TanStack Query v5 · Radix Themes · recharts · react-markdown (remark-gfm)
 
 ---
 

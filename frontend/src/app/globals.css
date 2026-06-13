@@ -359,3 +359,88 @@ a {
   gap: 1.5rem;
   background: var(--color-panel-solid);
 }
+
+/* ── AI guidance markdown (BriefPanel) ───────────────────────── */
+/* Minimal prose styles for react-markdown output inside the violet
+   guidance card: legible headings, bold, paragraphs, lists, and —
+   most importantly — bordered GFM tables for the 검사 지표 table. */
+.guidance-prose {
+  font-size: var(--font-size-2);
+  line-height: 1.6;
+}
+
+.guidance-prose > :first-child {
+  margin-top: 0;
+}
+
+.guidance-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.guidance-prose h1,
+.guidance-prose h2,
+.guidance-prose h3,
+.guidance-prose h4 {
+  margin: 1em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.guidance-prose h1 { font-size: var(--font-size-4); }
+.guidance-prose h2 { font-size: var(--font-size-3); }
+.guidance-prose h3,
+.guidance-prose h4 { font-size: var(--font-size-2); }
+
+.guidance-prose p {
+  margin: 0.5em 0;
+}
+
+.guidance-prose strong {
+  font-weight: 600;
+}
+
+.guidance-prose ul,
+.guidance-prose ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+
+.guidance-prose li {
+  margin: 0.2em 0;
+}
+
+.guidance-prose code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-2);
+  background: var(--violet-3);
+  font-size: 0.9em;
+}
+
+.guidance-prose a {
+  color: var(--violet-11);
+  text-decoration: underline;
+}
+
+.guidance-prose table {
+  width: 100%;
+  margin: 0.75em 0;
+  border-collapse: collapse;
+  font-size: var(--font-size-1);
+}
+
+.guidance-prose th,
+.guidance-prose td {
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--violet-5);
+  text-align: left;
+  vertical-align: top;
+}
+
+.guidance-prose th {
+  background: var(--violet-3);
+  font-weight: 600;
+}
+
+.guidance-prose tbody tr:nth-child(even) td {
+  background: var(--violet-2);
+}
