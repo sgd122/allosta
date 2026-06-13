@@ -74,7 +74,7 @@ export function BriefPanel({ bookingId, active }: Props) {
       <Flex align="center" gap="2" mb="4">
         <MobileIcon className="text-gray-11 shrink-0" />
         <Link
-          href={`tel:${data.phone}`}
+          href={`tel:${data.phone.replace(/[^0-9+]/g, '')}`}
           size="2"
           className="font-mono"
           aria-label={`고객에게 전화하기: ${data.phone}`}
