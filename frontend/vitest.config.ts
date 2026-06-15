@@ -9,5 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // Vitest owns the unit suite under src/. Playwright owns e2e/ (its specs
+    // import from '@playwright/test', which would crash under Vitest) — scoping
+    // the glob here keeps the two runners from colliding on *.spec.ts.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 });
