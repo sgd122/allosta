@@ -26,6 +26,12 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 
+# Playwright (browser E2E) — config + specs ARE tracked; artifacts are not.
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # Prisma: schema + migrations ARE tracked; generated client lives in node_modules.
 
 # Editor / OS

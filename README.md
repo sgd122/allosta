@@ -46,7 +46,7 @@ NestJS (:3000) ──Prisma──▶ PostgreSQL (:5432, docker)
   │     ├── availability-calendar (시간대 집계, availableCount — 만석 시 다른 일자·상담사 1차 대안 노출)
   │     └── 슬롯 CRUD (상담사 본인 + 관리자 전체; 겹침 가드 + 활성예약 삭제 가드)
   ├── Family (대칭형 FamilyLink Customer↔Customer 초대 코드 — PENDING/ACCEPTED/REVOKED)
-  ├── TestResult (seed + read-only, BioCom 7종 + 지표 참조범위/상태, GET /test-results/my = 본인 + ACCEPTED 가족)
+  ├── TestResult (seed + read-only, BioCom 7종 + 지표 참조범위/상태, GET /test-results = 본인 + ACCEPTED 가족)
   ├── Consultation · Challenge (상담기록 + 챌린지 카탈로그/등록, createRecord 원자 등록 — BioCom step-3)
   │     ├── 브리핑 조립 (GET /counselor/bookings/:id/brief — 결정론, briefOpenedAt 1회 기록)
   │     └── GuidanceModule (브리핑 열람 시 FALLBACK 가이던스 보장 → OpsScheduler 스윕으로 UPGRADED)
@@ -62,7 +62,7 @@ NestJS (:3000) ──Prisma──▶ PostgreSQL (:5432, docker)
 - **예약 생명주기**: `PENDING`(고객 생성) → `CONFIRMED`(상담사 확정) → `COMPLETED`/`CANCELLED`.
 - **가용성**: 파생값. `isOpen AND 미래 AND ACTIVE 없음 AND 업무시간[9,18)`. 이중 진실원 없음.
 - **TestResult 기반 subject**: 예약 시 `testResultId` 지정 → 서버가 `subjectType/subjectId` 파생. 클라이언트 오지정 방지.
-- **가족 연결**: 대칭형 `FamilyLink`(Customer↔Customer) 초대 코드(PENDING→ACCEPTED→REVOKED). 예약 subject는 항상 `CUSTOMER`이고 `subjectId`는 본인 또는 `ACCEPTED` 가족 파트너가 소유한 검사결과의 고객. `GET /test-results/my`는 ACCEPTED 가족 검사결과 포함.
+- **가족 연결**: 대칭형 `FamilyLink`(Customer↔Customer) 초대 코드(PENDING→ACCEPTED→REVOKED). 예약 subject는 항상 `CUSTOMER`이고 `subjectId`는 본인 또는 `ACCEPTED` 가족 파트너가 소유한 검사결과의 고객. `GET /test-results`는 ACCEPTED 가족 검사결과 포함.
 - **outcome 3상태**: `EXPLAINED` / `GUIDED` / `PURCHASED` (구버전 ON_HOLD·REJECTED에서 변경).
 - **권한 2층**: 역할(RBAC Guard) + 자원 소유권(서비스 레이어 — 본인 OR `ACCEPTED` FamilyLink 파트너).
 - **운영 강건화 (ops-hardening, ADR 0006)**:
@@ -89,6 +89,25 @@ NestJS (:3000) ──Prisma──▶ PostgreSQL (:5432, docker)
 - **프론트엔드 스타일·상태·데이터(ADR 0011)**: **Tailwind를 Radix Themes 위에 레이어링** — 색/반경을 Radix 런타임 CSS 변수에 매핑(`text-teal-11` → `var(--teal-11)`, 값 중복 0·테마 자동 추종), preflight OFF, 반복 토큰은 `shared/ui` 프리미티브(`Eyebrow`·`StatNumber`·`Meter`)로 통일. 상태는 **서버=TanStack Query / 클라이언트=Jotai**. 데이터 패칭 훅은 entity별 `api/queries.ts`(queryKey 팩토리 + `useX()`/`useXMutation()`)로 모으고 뷰는 인라인 `useQuery` 대신 슬라이스 훅을 소비.
 
 자세한 근거는 [설계문서](docs/04-system-design.md) · [ADR](docs/05-adr/) 참고.
+
+---
+
+## 화면 미리보기
+
+> 아래 스크린샷은 `docker compose up` + seed 만으로 재현되는 데모 상태(고정 시드)에서 캡처한 실제 화면입니다.
+> 직접 실행하지 않고도 핵심 흐름을 확인할 수 있도록 첨부합니다.
+
+| 고객 — 검사 결과 (참조범위 + 판정 배지) | 고객 — 예약 (가용 캘린더 + 가족 연동) |
+| --- | --- |
+| [![고객 검사 결과](docs/assets/03-customer-results.png)](docs/assets/03-customer-results.png) | [![고객 예약](docs/assets/02-customer-book.png)](docs/assets/02-customer-book.png) |
+
+| 상담사 — 상담 일정 (기간·상태 필터, 출석 정정) | 상담사 — 사전 브리핑 + AI 가이던스 |
+| --- | --- |
+| [![상담사 일정](docs/assets/04-counselor-schedule.png)](docs/assets/04-counselor-schedule.png) | [![상담사 브리핑](docs/assets/05-counselor-brief.png)](docs/assets/05-counselor-brief.png) |
+
+| 관리자 — 상담 전환 대시보드 (전환율·퍼널·지표별 전환·브리핑 열람률) | 로그인 (데모 계정 원클릭) |
+| --- | --- |
+| [![관리자 대시보드](docs/assets/06-admin-dashboard.png)](docs/assets/06-admin-dashboard.png) | [![로그인](docs/assets/01-login.png)](docs/assets/01-login.png) |
 
 ---
 
@@ -216,8 +235,26 @@ pnpm exec jest --config ./test/jest-e2e.json --runInBand
 | `analytics-contact.spec.ts`        | CallLog contactAttempts·callOutcomeDistribution·noShowWithoutContactRate 집계 (island A=0.5 / B=0 / C=null 패턴)                             | AC-6 (AC-L3)                         |
 | `call-log.spec.ts`                 | `POST .../calls` 생성·소유권(403)·없음(404) + `PATCH .../calls/:callId` 편집·소유권·교차예약(404)·status 불변 + `DELETE .../calls/:callId` 삭제·소유권(403)·교차예약(404)·status 불변 | AC-L1, AC-L2, AC-L5                  |
 
-> 브라우저 E2E(Playwright)는 의도적으로 제외했습니다(설계문서 중심 과제에서 setup 비용↑·신호↓).
-> 골든패스 증명은 백엔드 통합 테스트 + 본 README 워크스루로 대체합니다.
+### 브라우저 E2E (Playwright)
+
+골든패스의 도메인 로직은 위 백엔드 통합 테스트가 증명합니다. 그 위에 **브라우저에서만 존재하는 경계**
+— Next.js 미들웨어 라우트 가드 · `/api/proxy` 쿠키→Authorization 브리지 · httpOnly 세션 쿠키 ·
+역할별 홈 라우팅 — 를 실제 크로미움에서 검증하는 Playwright 스모크 스위트를 추가했습니다
+(`frontend/e2e/auth-routing.spec.ts`). 미인증 보호 라우트 차단, 3개 역할(고객/상담사/관리자) 로그인 후
+각자 홈 진입, 역할 불일치 시 본인 홈으로 되돌림을 커버합니다.
+
+```bash
+# 선행: docker compose up -d  +  백엔드(pnpm start:dev, :3000) + seed
+cd frontend
+pnpm exec playwright install chromium   # 최초 1회 (브라우저 바이너리)
+pnpm test:e2e                           # :5173 dev 서버는 자동 기동
+```
+
+> 단위/통합 스위트(`pnpm test`)와 별개 명령(`pnpm test:e2e`)입니다 — vitest는 `src/`,
+> Playwright는 `e2e/`로 러너 스코프를 분리해 `*.spec.ts` 충돌을 방지합니다.
+>
+> 대상 URL은 기본 `http://localhost:5173`이며, CI 등 다른 환경에서는 `E2E_BASE_URL`
+> 환경변수로 오버라이드할 수 있습니다 (`baseURL`·`webServer.url` 동시 적용).
 
 ---
 
