@@ -252,6 +252,9 @@ pnpm test:e2e                           # :5173 dev 서버는 자동 기동
 
 > 단위/통합 스위트(`pnpm test`)와 별개 명령(`pnpm test:e2e`)입니다 — vitest는 `src/`,
 > Playwright는 `e2e/`로 러너 스코프를 분리해 `*.spec.ts` 충돌을 방지합니다.
+>
+> 대상 URL은 기본 `http://localhost:5173`이며, CI 등 다른 환경에서는 `E2E_BASE_URL`
+> 환경변수로 오버라이드할 수 있습니다 (`baseURL`·`webServer.url` 동시 적용).
 
 ---
 
