@@ -18,7 +18,11 @@ type DemoRole = '고객' | '상담사' | '관리자';
 
 async function login(page: Page, role: DemoRole): Promise<void> {
   await page.goto('/login');
-  await page.getByRole('button', { name: `${role} 클릭해서 입력` }).click();
+  // The quick-fill button's accessible name concatenates two <Text> spans with
+  // no separating space ("고객클릭해서 입력"), so match whitespace-tolerantly.
+  await page
+    .getByRole('button', { name: new RegExp(`${role}\\s*클릭해서 입력`) })
+    .click();
   await page.getByRole('button', { name: '로그인', exact: true }).click();
 }
 
