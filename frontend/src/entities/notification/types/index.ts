@@ -3,6 +3,7 @@ export interface NotificationItem {
   type: string;
   channel?: string;
   status?: string;
+  readAt: string | null;
   createdAt: string;
   payload?: Record<string, unknown> | null;
 }

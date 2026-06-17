@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Notification, Role } from '@prisma/client';
 import { JwtAuthGuard } from '../common/auth/jwt-auth.guard';
@@ -25,6 +25,20 @@ export class NotificationController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<Notification[]> {
     return this.notificationService.getForCustomer(user.customerId as string);
+  }
+
+  /**
+   * PATCH /notifications/:id/read — marks a notification as read for the
+   * authenticated customer. Idempotent: re-marking a read notification is fine.
+   */
+  @Patch('notifications/:id/read')
+  @Roles(Role.CUSTOMER)
+  @ApiOperation({ summary: 'Mark a notification as read (customer)' })
+  markRead(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<Notification> {
+    return this.notificationService.markRead(user.customerId as string, id);
   }
 
   /**

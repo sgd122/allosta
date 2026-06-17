@@ -1,3 +1,3 @@
 export type { NotificationItem } from './types';
-export { getNotifications } from './api';
-export { notificationKeys, useNotifications } from './api/queries';
+export { getNotifications, markNotificationRead } from './api';
+export { notificationKeys, useNotifications, useMarkNotificationReadMutation } from './api/queries';
