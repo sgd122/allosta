@@ -477,6 +477,7 @@ model QaSession {
 
 model QaMessage {
   id                 String           @id @default(cuid())
+  seq                Int              @default(autoincrement()) // monotonic insert order; the deterministic thread sort key. createdAt alone ties because the USER+ASSISTANT rows of one turn are inserted in a single transaction and share CURRENT_TIMESTAMP.
   sessionId          String
   role               QaMessageRole
   text               String
@@ -488,5 +489,5 @@ model QaMessage {
 
   session QaSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  @@index([sessionId, createdAt])
+  @@index([sessionId, seq])
 }

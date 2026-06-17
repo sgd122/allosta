@@ -29,7 +29,8 @@ Accepted
 - **이탈 지표는 질문 대상자(subject) 기준·전역 스코프**(상담사 무관). 질문자(`customerId`)와 대상자(`subjectType/subjectId`)를 구분해 `QaSession`에 스냅샷 저장. behavioral deflection = 미성숙 윈도우(7일 미경과) 제외 후 (세션 시점, +N일] 내 동일 subject 신규 예약 부재율. 대시보드 라벨 "전체 (상담사 무관)".
 - `groundedMetricRefs`는 **의도적 비정규화**(읽기 전용 표시용, 쿼리 대상 아님). `QaMessageSource` enum이 FALLBACK 사유(UNAVAILABLE/TIMEOUT/SATURATED/GUARDRAIL)를 세분.
 - **단일 로컬 LLM 동시성은 인플라이트 캡으로 처리하며, abort는 fetch만 취소**(Ollama 서버 작업은 지속)한다는 한계를 명시.
-- 접근제어는 신규 모델 없이 JWT + `OwnershipService`(본인 + ACCEPTED FamilyLink) 재사용. PHI 보호를 위해 로깅은 식별자/불리언/소스만 기록(지표 값·답변 본문 미기록).
+- 접근제어는 신규 모델 없이 JWT + `OwnershipService`(본인 + ACCEPTED FamilyLink) 재사용. 세션 생성 시점뿐 아니라 **모든 세션 읽기/질문(`GET /qa/sessions/:id`·`POST .../messages`)에서 subject 소유·동의를 라이브 재검증**한다(`loadOwnedSession` → `assertSubjectOwnedByCustomer`). 생성 후 FamilyLink가 REVOKE되면 기존 세션으로도 즉시 `403`이 되어 가족 구성원 지표(`loadIndicators`)에 더 이상 접근 못 한다 — booking/test-result 경로와 동일한 무캐싱·즉시 반영 불변식(AC11). IDOR 소유권 검사(`session.customerId`)만으로는 막지 못하는 사후 동의 철회 누수를 차단. PHI 보호를 위해 로깅은 식별자/불리언/소스만 기록(지표 값·답변 본문 미기록).
+- **턴 순서 결정성**: 한 턴의 USER+ASSISTANT 행은 단일 `$transaction`에서 삽입되어 `createdAt`(=`CURRENT_TIMESTAMP`)이 동일하므로 `createdAt` 단독 정렬은 두 행 간 순서가 미정의(답변이 질문보다 먼저 반환 → 프론트 `isEscalation` 인접성·LLM 이력 손상). `QaMessage.seq`(monotonic `autoincrement`) 컬럼을 삽입 순서 정렬 키로 두고 모든 스레드 조회를 `orderBy: { seq }`로 통일(마이그레이션 `qa_message_seq`, 인덱스 `[sessionId, seq]`). `id`(cuid, 비단조)·`role`(알파벳상 ASSISTANT<USER) 모두 보조 키로 부적합해 전용 시퀀스를 채택.
 - 기존 직접 예약 플로우(`/book`, 예약 쓰기 경로)는 **완전 무변경**(AC8 회귀 보호).
 
 ## Follow-ups

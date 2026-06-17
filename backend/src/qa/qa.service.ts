@@ -110,7 +110,7 @@ export class QaService {
     return this.prisma.qaSession.findMany({
       where: { customerId },
       orderBy: { createdAt: 'desc' },
-      include: { messages: { orderBy: { createdAt: 'asc' } } },
+      include: { messages: { orderBy: { seq: 'asc' } } },
     });
   }
 
@@ -122,7 +122,7 @@ export class QaService {
     const session = await this.loadOwnedSession(customerId, sessionId);
     const messages = await this.prisma.qaMessage.findMany({
       where: { sessionId: session.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { seq: 'asc' },
     });
     return { ...session, messages };
   }
@@ -262,7 +262,16 @@ export class QaService {
     });
   }
 
-  /** Loads a session and enforces caller ownership (404 if missing, 403 if not theirs). */
+  /**
+   * Loads a session and enforces both authorization layers on every read/ask
+   * (404 if missing, 403 otherwise):
+   *  1. caller ownership — the session must belong to the asker (IDOR guard);
+   *  2. live subject consent — the asker must STILL own (self) or have an
+   *     ACCEPTED family link to the session's subject. createSession checks this
+   *     once, but a FamilyLink revoked afterwards must immediately cut off access
+   *     to the subject's metrics (loaded in ask via loadIndicators). Re-checking
+   *     here mirrors the booking/test-result paths: live, no caching (AC11).
+   */
   private async loadOwnedSession(
     customerId: string,
     sessionId: string,
@@ -276,6 +285,11 @@ export class QaService {
     if (session.customerId !== customerId) {
       throw new ForbiddenException('Session does not belong to the customer');
     }
+    await this.ownership.assertSubjectOwnedByCustomer(
+      customerId,
+      session.subjectType,
+      session.subjectId,
+    );
     return session;
   }
 
@@ -298,7 +312,7 @@ export class QaService {
   private async loadHistory(sessionId: string): Promise<QaHistoryTurn[]> {
     const messages = await this.prisma.qaMessage.findMany({
       where: { sessionId },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { seq: 'asc' },
       select: { role: true, text: true },
     });
     return messages
