@@ -352,7 +352,7 @@ export class AnalyticsService {
       WITH mature AS (
         SELECT s."subjectId", s."subjectType", s."createdAt"
         FROM "QaSession" s
-        WHERE s."createdAt" <= NOW() - make_interval(days => ${windowDays}::int)
+        WHERE s."createdAt" <= (NOW() AT TIME ZONE 'utc') - make_interval(days => ${windowDays}::int)
       )
       SELECT
         COUNT(*)::bigint AS "matureCount",
