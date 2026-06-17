@@ -29,7 +29,7 @@ import { Eyebrow } from '@/shared/ui';
 import { bookingInputForReport } from '../model/booking-intent';
 import type { CompleteBookingDialogProps } from '../types';
 
-export function CompleteBookingDialog({ intent, onClose, onCompleted }: CompleteBookingDialogProps) {
+export function CompleteBookingDialog({ intent, onClose, onCompleted, onConflict }: CompleteBookingDialogProps) {
   const queryClient = useQueryClient();
   const [selectedReportKey, setSelectedReportKey] = useState<string | null>(null);
   const [concern, setConcern] = useState('');
@@ -58,7 +58,19 @@ export function CompleteBookingDialog({ intent, onClose, onCompleted }: Complete
       setSubmitError(null);
       onCompleted?.();
     },
-    onError: (err) => setSubmitError(toFriendlyMessage(err, '예약에 실패했습니다.')),
+    onError: (err) => {
+      // pfetch throws `Error('<status>: <body>')`, so the status is the leading
+      // token. Anchor on a 409 word boundary so a body that merely contains
+      // "409" (or a status like 4090) can't false-positive.
+      const isConflict = err instanceof Error && /^409\b/.test(err.message);
+      if (isConflict) {
+        void queryClient.invalidateQueries({ queryKey: ['availabilityCalendar'] });
+        onClose();
+        onConflict?.();
+        return;
+      }
+      setSubmitError(toFriendlyMessage(err, '예약에 실패했습니다.'));
+    },
   });
 
   useEffect(() => {

@@ -1,4 +1,14 @@
-import { Badge, Box, Button, Callout, Card, Flex, Spinner, Text } from '@radix-ui/themes';
+import {
+  AlertDialog,
+  Badge,
+  Box,
+  Button,
+  Callout,
+  Card,
+  Flex,
+  Spinner,
+  Text,
+} from '@radix-ui/themes';
 import { ExclamationTriangleIcon } from '@radix-ui/react-icons';
 import { useCancelBookingMutation } from '@/entities/booking';
 import type { MyBooking } from '@/entities/booking';
@@ -18,8 +28,6 @@ export function BookingCard({
 }) {
   const cfg = STATUS_CONFIG[booking.status];
 
-  // A booking anchors a single testResultId, but it is really for the whole
-  // visit-level 검사 결과서 — so show the report's tests, not one serviceType.
   const reportSummary = report
     ? report.results.map((r) => formatServiceType(r.serviceType)).join(', ')
     : booking.serviceType
@@ -29,12 +37,6 @@ export function BookingCard({
   const cancelMutation = useCancelBookingMutation();
 
   const canCancel = CANCELLABLE.has(booking.status);
-
-  function handleCancel() {
-    if (window.confirm('이 예약을 취소하시겠습니까?')) {
-      cancelMutation.mutate(booking.id);
-    }
-  }
 
   return (
     <Card
@@ -85,16 +87,40 @@ export function BookingCard({
             {cfg.label}
           </Badge>
           {canCancel && (
-            <Button
-              variant="soft"
-              color="gray"
-              size="2"
-              disabled={cancelMutation.isPending}
-              onClick={handleCancel}
-            >
-              {cancelMutation.isPending ? <Spinner size="1" /> : null}
-              예약 취소
-            </Button>
+            <AlertDialog.Root>
+              <AlertDialog.Trigger>
+                <Button
+                  variant="soft"
+                  color="gray"
+                  size="2"
+                  disabled={cancelMutation.isPending}
+                >
+                  {cancelMutation.isPending ? <Spinner size="1" /> : null}
+                  예약 취소
+                </Button>
+              </AlertDialog.Trigger>
+              <AlertDialog.Content style={{ maxWidth: 440 }}>
+                <AlertDialog.Title>예약 취소</AlertDialog.Title>
+                <AlertDialog.Description size="2">
+                  이 예약을 취소하시겠습니까? 취소 후에는 되돌릴 수 없습니다.
+                </AlertDialog.Description>
+                <Flex gap="3" mt="4" justify="end">
+                  <AlertDialog.Cancel>
+                    <Button variant="soft" color="gray">
+                      아니요
+                    </Button>
+                  </AlertDialog.Cancel>
+                  <AlertDialog.Action>
+                    <Button
+                      color="red"
+                      onClick={() => cancelMutation.mutate(booking.id)}
+                    >
+                      예약 취소
+                    </Button>
+                  </AlertDialog.Action>
+                </Flex>
+              </AlertDialog.Content>
+            </AlertDialog.Root>
           )}
         </Flex>
       </Flex>

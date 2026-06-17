@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   Notification,
   NotificationChannel,
@@ -112,6 +112,42 @@ export class NotificationService {
         booking: { customerId },
       },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Marks a notification as read by the owning customer.
+   *
+   * Ownership is derived via the notification's booking (`booking.customerId`).
+   * Throws NotFoundException if the notification does not exist or has no
+   * associated booking, and ForbiddenException if it belongs to a different
+   * customer. Re-marking an already-read notification is idempotent.
+   */
+  async markRead(customerId: string, notificationId: string): Promise<Notification> {
+    const notification = await this.prisma.notification.findUnique({
+      where: { id: notificationId },
+      include: { booking: { select: { customerId: true } } },
+    });
+
+    if (!notification || !notification.booking) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    if (notification.booking.customerId !== customerId) {
+      throw new ForbiddenException('Notification does not belong to this customer');
+    }
+
+    // Already read — return as-is. Skips a redundant write and preserves the
+    // original (first) read timestamp; re-marking stays idempotent. Strip the
+    // joined `booking` so the shape matches the update path below.
+    if (notification.readAt) {
+      const { booking: _booking, ...rest } = notification;
+      return rest;
+    }
+
+    return this.prisma.notification.update({
+      where: { id: notificationId },
+      data: { readAt: new Date() },
     });
   }
 

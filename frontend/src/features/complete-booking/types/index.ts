@@ -11,4 +11,5 @@ export interface CompleteBookingDialogProps {
   intent: BookingIntent | null;
   onClose: () => void;
   onCompleted?: () => void;
+  onConflict?: () => void;
 }
