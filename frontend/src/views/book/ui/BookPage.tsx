@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Box, Callout, Flex, Heading, Text } from '@radix-ui/themes';
-import { CheckIcon } from '@radix-ui/react-icons';
+import { CheckIcon, ExclamationTriangleIcon } from '@radix-ui/react-icons';
 import {
   BookingCalendar,
   useAvailabilityCalendar,
@@ -16,11 +16,13 @@ import { toFriendlyMessage } from '@/shared/api';
 export default function BookPage() {
   const [activeIntent, setActiveIntent] = useState<BookingIntent | null>(null);
   const [successText, setSuccessText] = useState<string | null>(null);
+  const [conflictText, setConflictText] = useState<string | null>(null);
 
   const calendarQuery = useAvailabilityCalendar();
 
   function handlePickSlot(slot: AggregatedSlot) {
     setSuccessText(null);
+    setConflictText(null);
     setActiveIntent(bookingIntentFromAggregatedSlot(slot));
   }
 
@@ -52,6 +54,13 @@ export default function BookPage() {
         </Callout.Root>
       )}
 
+      {conflictText && (
+        <Callout.Root color="amber" mb="5" role="alert">
+          <Callout.Icon><ExclamationTriangleIcon /></Callout.Icon>
+          <Callout.Text>{conflictText}</Callout.Text>
+        </Callout.Root>
+      )}
+
       <Flex gap="5" align="start" direction={{ initial: 'column', md: 'row' }}>
         <BookingCalendar
           calendar={calendarQuery.data}
@@ -68,6 +77,9 @@ export default function BookPage() {
         intent={activeIntent}
         onClose={() => setActiveIntent(null)}
         onCompleted={handleCompleted}
+        onConflict={() =>
+          setConflictText('방금 다른 분이 같은 시간을 예약하셨습니다. 다른 시간을 선택해 주세요.')
+        }
       />
     </Box>
   );
