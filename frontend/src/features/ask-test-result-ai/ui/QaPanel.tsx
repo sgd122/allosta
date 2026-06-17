@@ -22,6 +22,7 @@ import {
   useAskQuestionMutation,
   useCreateQaSessionMutation,
   useQaSession,
+  useQaSessions,
   useSubmitFeedbackMutation,
   type QaFeedback,
   type QaMessage,
@@ -46,10 +47,18 @@ export function QaPanel({ testResultId }: Props) {
   const [question, setQuestion] = useState('');
   const [askError, setAskError] = useState<string | null>(null);
 
-  const sessionQuery = useQaSession(sessionId);
+  // Resume the customer's most recent session for this report (list is ordered
+  // createdAt desc) so reopening the panel or refreshing keeps the thread and
+  // avoids spawning a duplicate session on the next question.
+  const sessionsQuery = useQaSessions();
+  const existingSessionId =
+    sessionsQuery.data?.find((s) => s.testResultId === testResultId)?.id ?? null;
+  const activeSessionId = sessionId ?? existingSessionId;
+
+  const sessionQuery = useQaSession(activeSessionId);
   const createSession = useCreateQaSessionMutation();
   const askQuestionMutation = useAskQuestionMutation();
-  const feedbackMutation = useSubmitFeedbackMutation(sessionId ?? '');
+  const feedbackMutation = useSubmitFeedbackMutation(activeSessionId ?? '');
   const messages = sessionQuery.data?.messages ?? [];
 
   // Derived from the mutations — no duplicated `isAsking` state to keep in sync.
@@ -64,7 +73,7 @@ export function QaPanel({ testResultId }: Props) {
     try {
       // Create the session lazily so opening the panel costs nothing (AC1). The
       // id is known only after create resolves, so it's passed per-ask call.
-      let activeId = sessionId;
+      let activeId = activeSessionId;
       if (!activeId) {
         const session = await createSession.mutateAsync(testResultId);
         activeId = session.id;
