@@ -1,4 +1,11 @@
-export type { Analytics, BookingFunnel, RecordListItem, RecordsPage, DrilldownDetail } from './types';
+export type {
+  Analytics,
+  BookingFunnel,
+  QaDeflection,
+  RecordListItem,
+  RecordsPage,
+  DrilldownDetail,
+} from './types';
 export { getAnalytics, getAnalyticsScoped, getAdminRecords, getDrilldown } from './api';
 export {
   analyticsKeys,

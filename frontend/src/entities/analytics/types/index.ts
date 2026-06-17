@@ -9,6 +9,17 @@ export interface BookingFunnel {
   cancelled: number;
 }
 
+/**
+ * Customer AI Q&A deflection metrics (ADR 0018, AC10). GLOBAL scope
+ * (counselor-agnostic) — rendered with the label "전체 (상담사 무관)". `null`
+ * rates mean "no data yet" (denominator 0), distinct from a 0 rate.
+ */
+export interface QaDeflection {
+  helpfulnessRate: number | null;
+  behavioralDeflectionRate: number | null;
+  sessionCount: number;
+}
+
 export interface Analytics {
   totalRecords: number;
   conversionRate: number;
@@ -30,6 +41,8 @@ export interface Analytics {
    * brief was opened by the counselor (AC-P7). Zero when the denominator is zero.
    */
   briefOpenRate: number;
+  /** Customer AI Q&A deflection metrics (AC10), global scope. */
+  qaDeflection: QaDeflection;
 }
 
 export interface RecordListItem {
