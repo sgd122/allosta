@@ -5,6 +5,9 @@ import {
   FamilyLinkStatus,
   Outcome,
   PrismaClient,
+  QaFeedback,
+  QaMessageRole,
+  QaMessageSource,
   Role,
   SubjectType,
 } from '@prisma/client';
@@ -45,6 +48,7 @@ async function main(): Promise<void> {
   await prisma.consultationRecordProduct.deleteMany();
   await prisma.consultationRecord.deleteMany();
   await prisma.notification.deleteMany();
+  await prisma.qaSession.deleteMany();
   await prisma.callLog.deleteMany();
   await prisma.booking.deleteMany();
   await prisma.availabilitySlot.deleteMany();
@@ -245,6 +249,30 @@ async function main(): Promise<void> {
         { metricKey: 'ldl', label: 'LDL 콜레스테롤', value: 148, unit: 'mg/dL', referenceRange: '< 130', status: '주의' },
         { metricKey: 'insulin', label: '공복인슐린', value: 9.1, unit: 'µIU/mL', referenceRange: '2.6–24.9', status: '정상' },
       ],
+    },
+  });
+
+  // Sample customer-facing AI Q&A grounded on the metabolic result (ADR 0018).
+  // One session with a grounded interpretation turn + a positive rating, so the
+  // /results panel and admin deflection card have data on a fresh `db seed`.
+  await prisma.qaSession.create({
+    data: {
+      customerId: customer.id,
+      subjectType: SubjectType.CUSTOMER,
+      subjectId: customer.id,
+      testResultId: metabolicResult.id,
+      messages: {
+        create: [
+          { role: QaMessageRole.USER, text: '공복혈당이 무슨 뜻인가요?', inScope: true },
+          {
+            role: QaMessageRole.ASSISTANT,
+            text: '공복혈당은 8시간 이상 공복 상태에서 측정한 혈당 수치예요. 회원님 값은 102 mg/dL로 참고범위(70–99) 기준 "주의"에 해당해요. 수치의 해석일 뿐 진단이나 처방은 아니며, 자세한 상담이 필요하면 상담 예약을 권해드려요.',
+            source: QaMessageSource.LLM,
+            groundedMetricRefs: ['glucose'],
+            feedback: QaFeedback.YES,
+          },
+        ],
+      },
     },
   });
 

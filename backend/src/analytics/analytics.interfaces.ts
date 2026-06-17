@@ -39,6 +39,28 @@ export interface BookingFunnel {
   cancelled: number;
 }
 
+/**
+ * Customer AI Q&A deflection metrics (ADR 0018, AC10). GLOBAL scope
+ * (counselor-agnostic) — the dashboard labels this "전체 (상담사 무관)".
+ */
+export interface QaDeflectionMetrics {
+  /**
+   * ASSISTANT answers rated YES / all rated answers (explicit feedback). `null`
+   * when no answer has been rated yet (denominator 0) — distinguishes "no data"
+   * from "0% helpful", mirroring challengeConversionRate's null-vs-0 convention.
+   */
+  helpfulnessRate: number | null;
+  /**
+   * Behavioral deflection: among MATURE sessions (createdAt older than the
+   * window, so it has fully elapsed), the fraction with NO booking by the same
+   * subject within (session.createdAt, +N days]. Subject-attributed (the
+   * question's subject, not the asker). `null` when there are no mature sessions.
+   */
+  behavioralDeflectionRate: number | null;
+  /** Total Q&A sessions (all, not window-bound). */
+  sessionCount: number;
+}
+
 export interface AnalyticsDashboard {
   totalRecords: number;
   conversionRate: number;
@@ -106,6 +128,11 @@ export interface AnalyticsDashboard {
    * contacted", mirroring challengeConversionRate's null-vs-0 convention above.
    */
   noShowWithoutContactRate: number | null;
+  /**
+   * Customer AI Q&A deflection metrics (AC10). GLOBAL scope (counselor-agnostic),
+   * independent of the own/all counselor toggle used by the rest of the dashboard.
+   */
+  qaDeflection: QaDeflectionMetrics;
 }
 
 export interface AnalyticsRecordRow {

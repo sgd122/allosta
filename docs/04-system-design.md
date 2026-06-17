@@ -914,3 +914,20 @@ sequenceDiagram
 | 상담사 콘솔 일정 가시성·필터 | 스케줄에 `NO_SHOW` 포함(CANCELLED만 제외) + 기간·예약상태 2축 필터·날짜별 그룹핑을 클라이언트 순수 함수(`shared/lib/date`)로 수행 · 가용 일정도 날짜별 그룹                                                   | 콘솔 데이터셋은 1인 단위로 작아 서버 왕복 불요(즉시 반응·단위 테스트 용이), `NO_SHOW` 가시화로 출석 정정 대상이 일정에서 사라지던 모순 해소                                    | [0013](./05-adr/0013-counselor-console-schedule-filtering.md) |
 | 상담 전 가이던스 (로컬 LLM 폴백) | 예약 단위 `ConsultationBriefGuidance` 엔티티 + 브리핑 열람 시 결정론 FALLBACK 보장 + OpsScheduler `@Interval` 스윕(FALLBACK→UPGRADED, 멱등, 수동 트리거 없음) + fail-soft Ollama 어댑터                       | golden path는 Ollama 없이도 항상 통과(재현성 불가침). `bookingId @unique`가 멱등 업서트 타깃. 사후 요약이 아닌 예약 단위 사전 가이던스. 비결정 LLM을 어댑터 경계 안에 가두어 테스트 가능 경계와 비단정 경계를 명확히 분리 | [0014](./05-adr/0014-local-llm-fallback-summary.md)           |
 | CallLog 비파괴적 증거 레이어      | `CallLog` additive 테이블 — `CallOutcome` enum(CONNECTED/NO_ANSWER/INVALID) + `POST /counselor/bookings/:bookingId/calls` + `phone` 브리핑 투영(brief access 경계) + Analytics 3필드(`contactAttempts`·`callOutcomeDistribution`·`noShowWithoutContactRate`). P5 루즈 커플링: CallLog는 절대 `Booking.status`를 쓰지 않음 | NFR1 준수(외부 계정 0) + 비파괴적 additive 확장 + no-show 연락 시도 자기보고 지표 가시성. `noShowWithoutContactRate: null`(NO_SHOW=0) / `0`(전원 접촉) / `0.5`(절반 미접촉) | [0016](./05-adr/0016-call-log-evidence-layer.md)              |
+
+## 고객용 AI Q&A 모듈 (ADR 0018)
+
+**백엔드** `backend/src/qa/` (booking 레이아웃 미러):
+- `qa-answer.interface.ts` — `QaAnswerGenerator`(`available()`/`generate()`), `GuidanceGenerator`와 동형.
+- `ollama.qa.ts` — `ollama.guidance.ts` near-copy(env `OLLAMA_BASE_URL`/`SUMMARY_MODEL`, AbortController, `stream:false`) + 해석 전용 한국어 시스템 프롬프트 + 별도 `QA_LLM_TIMEOUT_MS`(기본 4000ms; 30s 상수 미재사용).
+- `template.qa.ts` — 상태별 결정론 한국어 해석(폴백 + 안전 폴백).
+- `scope.ts` — 순수 `classifyScope`(질문 게이트) + `violatesAnswerGuardrail`(답변 후처리, **조언 의도(처방형 활용)** 기반 — `식단/권장/추천` 등 맨 명사는 미트립해 정상 해석의 오탐 방지, qa-scope.spec.ts 회귀 커버). 단일 검토 가능 키워드 상수.
+- `qa-throttler.guard.ts` — `ThrottlerGuard` 확장, **customerId 단위** 트래커(IP 아님). write 핸들러(`POST /qa/sessions`·`/messages`)에만 적용해 인플라이트 캡이 막지 못하는 row 생성/남용을 차단(`QA_RATELIMIT_LIMIT`/`QA_RATELIMIT_TTL`, 기본 30회/60s → 초과 시 429).
+- `qa.service.ts` — 흐름: 소유권 체크(`assertSubjectOwnedByCustomer`) → `QaSession`에 subject 스냅샷 → 질문 스코프 게이트 → 인플라이트 캡(포화 시 `FALLBACK_SATURATED`) → Ollama(`QA_LLM_TIMEOUT_MS`) → throw/timeout/empty 시 `FALLBACK_UNAVAILABLE`/`FALLBACK_TIMEOUT` → 답변 후처리 트립 시 `FALLBACK_GUARDRAIL` → USER+ASSISTANT를 `$transaction`으로 기록(고아 행 방지). **세션 읽기/질문(`loadOwnedSession`)은 IDOR 소유권 + subject 동의를 라이브 재검증** — 생성 후 FamilyLink REVOKE 시 기존 세션도 즉시 `403`(booking/test-result와 동일한 무캐싱 불변식, AC11). 스레드 조회는 `createdAt`이 아닌 **`seq`(monotonic)로 정렬** — 한 턴의 두 행이 같은 트랜잭션 타임스탬프를 공유하므로 USER/ASSISTANT 순서를 결정적으로 보장. 로깅은 식별자/불리언/소스만(PHI 미기록).
+- `qa.controller.ts` — `POST /qa/sessions`, `POST /qa/sessions/:id/messages`, `GET /qa/sessions`, `GET /qa/sessions/:id`, `PATCH /qa/messages/:id/feedback`(모두 `@Roles(CUSTOMER)` + 서비스 단 IDOR 가드; 두 write 핸들러는 추가로 `QaThrottlerGuard` 적용).
+
+**데이터 모델** (마이그레이션 `add_qa` + `qa_message_seq`): enum `QaMessageRole`/`QaMessageSource{LLM,FALLBACK_UNAVAILABLE,FALLBACK_TIMEOUT,FALLBACK_SATURATED,FALLBACK_GUARDRAIL}`/`QaFeedback`; `QaSession`(customerId·subjectType·subjectId 스냅샷·testResultId nullable SetNull) + `QaMessage`(role·text·groundedMetricRefs·source·inScope·feedback·**`seq` monotonic autoincrement** — 결정적 스레드 정렬 키, 인덱스 `[sessionId, seq]`). `Customer`/`TestResult`에 역참조 추가.
+
+**분석(AC10)**: `analytics.service.ts`에 `aggregateQaDeflection()` 추가(`$queryRaw` 집합 쿼리, N+1 없음). subject 기준 LEFT-JOIN/NOT EXISTS로 (세션, +N일] 내 신규 예약 귀속 + 미성숙 윈도우(`QA_DEFLECTION_WINDOW_DAYS`) 제외, **전역 스코프**. `getDashboard` `Promise.all` + `AnalyticsDashboard.qaDeflection{helpfulnessRate, behavioralDeflectionRate, sessionCount}`(신규 엔드포인트 없음).
+
+**프론트(FSD)**: `entities/qa`(types/api/keys/queries) · `features/ask-test-result-ai`(`QaPanel` — 그라운딩 칩, 피드백, 질문측 거절 시에만 `/book` CTA; `model/escalation.ts` 순수 분기) · `views/results`(리포트 카드별 opt-in) · 어드민 `views/dashboard`(`QaDeflectionCard`, 라벨 "전체 (상담사 무관)", zero-QA null/0 안전).

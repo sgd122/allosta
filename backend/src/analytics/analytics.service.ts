@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { BookingStatus, CallOutcome, Outcome, Prisma } from '@prisma/client';
+import {
+  BookingStatus,
+  CallOutcome,
+  Outcome,
+  Prisma,
+  QaFeedback,
+  QaMessageRole,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AnalyticsDashboard,
@@ -11,6 +18,7 @@ import {
   MetricConversionItem,
   OutcomeDistribution,
   ProductInterestItem,
+  QaDeflectionMetrics,
 } from './analytics.interfaces';
 
 @Injectable()
@@ -31,6 +39,7 @@ export class AnalyticsService {
       contactAttempts,
       callOutcomeGroups,
       noShowWithoutContactRate,
+      qaDeflection,
     ] = await Promise.all([
       this.countTotalRecords(counselorId),
       this.groupByOutcome(counselorId),
@@ -44,6 +53,8 @@ export class AnalyticsService {
       this.countContactAttempts(counselorId),
       this.groupByCallOutcome(counselorId),
       this.computeNoShowWithoutContactRate(counselorId),
+      // GLOBAL scope by design (counselor-agnostic) — ignores counselorId.
+      this.aggregateQaDeflection(),
     ]);
 
     const outcomeDistribution = this.buildOutcomeDistribution(outcomeGroups);
@@ -72,6 +83,7 @@ export class AnalyticsService {
       contactAttempts,
       callOutcomeDistribution,
       noShowWithoutContactRate,
+      qaDeflection,
     };
   }
 
@@ -318,6 +330,68 @@ export class AnalyticsService {
         conversionRate: discussed > 0 ? purchased / discussed : 0,
       };
     });
+  }
+
+  /**
+   * Customer AI Q&A deflection (ADR 0018, AC10). GLOBAL scope — counselor-agnostic.
+   *
+   * behavioralDeflectionRate: among MATURE sessions (createdAt older than the
+   * window, so the 7-day window has fully elapsed and can't be retroactively
+   * "un-deflected"), the fraction with NO booking by the SAME SUBJECT
+   * (subjectType+subjectId, not the asker) within (createdAt, +N days]. Single
+   * set-based query (NOT EXISTS, no N+1); parameterised window.
+   *
+   * helpfulnessRate: ASSISTANT answers rated YES / all rated. Both `null` when
+   * their denominator is 0 (no data vs zero), mirroring challengeConversionRate.
+   */
+  private async aggregateQaDeflection(): Promise<QaDeflectionMetrics> {
+    const windowDays = this.deflectionWindowDays();
+
+    type BehaviorRow = { matureCount: bigint; deflectedCount: bigint };
+    const [behavior] = await this.prisma.$queryRaw<BehaviorRow[]>`
+      WITH mature AS (
+        SELECT s."subjectId", s."subjectType", s."createdAt"
+        FROM "QaSession" s
+        WHERE s."createdAt" <= (NOW() AT TIME ZONE 'utc') - make_interval(days => ${windowDays}::int)
+      )
+      SELECT
+        COUNT(*)::bigint AS "matureCount",
+        COUNT(*) FILTER (
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "Booking" b
+            WHERE b."subjectId" = mature."subjectId"
+              AND b."subjectType" = mature."subjectType"
+              AND b."createdAt" > mature."createdAt"
+              AND b."createdAt" <= mature."createdAt" + make_interval(days => ${windowDays}::int)
+          )
+        )::bigint AS "deflectedCount"
+      FROM mature
+    `;
+
+    const matureCount = Number(behavior?.matureCount ?? 0);
+    const deflectedCount = Number(behavior?.deflectedCount ?? 0);
+    const behavioralDeflectionRate =
+      matureCount > 0 ? deflectedCount / matureCount : null;
+
+    const [sessionCount, evaluated, helpful] = await Promise.all([
+      this.prisma.qaSession.count(),
+      this.prisma.qaMessage.count({
+        where: { role: QaMessageRole.ASSISTANT, feedback: { not: null } },
+      }),
+      this.prisma.qaMessage.count({
+        where: { role: QaMessageRole.ASSISTANT, feedback: QaFeedback.YES },
+      }),
+    ]);
+
+    const helpfulnessRate = evaluated > 0 ? helpful / evaluated : null;
+
+    return { helpfulnessRate, behavioralDeflectionRate, sessionCount };
+  }
+
+  /** Behavioral-deflection window in days (env QA_DEFLECTION_WINDOW_DAYS, default 7). */
+  private deflectionWindowDays(): number {
+    const parsed = Number(process.env.QA_DEFLECTION_WINDOW_DAYS);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 7;
   }
 
   /**

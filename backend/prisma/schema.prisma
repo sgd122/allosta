@@ -127,11 +127,12 @@ model Customer {
   name   String
   phone  String
 
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   bookings     Booking[]
-  inviterLinks FamilyLink[] @relation("InviterLinks")
-  inviteeLinks FamilyLink[] @relation("InviteeLinks")
+  inviterLinks FamilyLink[]          @relation("InviterLinks")
+  inviteeLinks FamilyLink[]          @relation("InviteeLinks")
   enrollments  ChallengeEnrollment[]
+  qaSessions   QaSession[]
 }
 
 model Counselor {
@@ -140,7 +141,7 @@ model Counselor {
   name      String
   specialty String
 
-  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   slots       AvailabilitySlot[]
   records     ConsultationRecord[]
   enrollments ChallengeEnrollment[]
@@ -164,20 +165,20 @@ model AvailabilitySlot {
 }
 
 model Booking {
-  id           String        @id @default(cuid())
-  slotId       String
-  customerId   String
-  subjectType  SubjectType
-  subjectId    String
+  id            String        @id @default(cuid())
+  slotId        String
+  customerId    String
+  subjectType   SubjectType
+  subjectId     String
   // The test result the consultation is about. Nullable for legacy bookings
   // created before the calendar redesign; new bookings always set it, and the
   // subject (subjectType/subjectId) is derived from this result's owner.
-  testResultId String?
-  status       BookingStatus @default(PENDING)
+  testResultId  String?
+  status        BookingStatus @default(PENDING)
   // Optional customer pre-question (사전질문). Surfaced write-only into the
   // counselor brief (consultation prep, ADR 0014) — never read back to the
   // customer. Length-bounded at the DTO layer (@MaxLength).
-  concern      String?
+  concern       String?
   // First time the assigned counselor opened the pre-consultation brief
   // (brief-open-rate numerator, AC-P7). Set once via a conditional updateMany
   // (briefOpenedAt: null guard) so concurrent opens stay DB-idempotent.
@@ -188,9 +189,9 @@ model Booking {
   // here. Write-once at create() — bookings never reschedule their slot. If a
   // reschedule feature is ever added it MUST update these columns to keep them in
   // sync with the source slot.
-  slotStartAt  DateTime
-  slotEndAt    DateTime
-  createdAt    DateTime      @default(now())
+  slotStartAt   DateTime
+  slotEndAt     DateTime
+  createdAt     DateTime      @default(now())
 
   // NOTE: the partial unique index on (slotId) WHERE status IN ('PENDING','CONFIRMED')
   // is added via raw SQL migration (see header comment) — it is what enforces
@@ -199,9 +200,9 @@ model Booking {
   // customerId + tsrange(slotStartAt, slotEndAt), partial on ACTIVE), enforces
   // that one customer cannot hold two overlapping ACTIVE bookings (ADR 0015).
 
-  slot          AvailabilitySlot    @relation(fields: [slotId], references: [id], onDelete: Cascade)
-  customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  testResult    TestResult?         @relation(fields: [testResultId], references: [id], onDelete: SetNull)
+  slot          AvailabilitySlot           @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  customer      Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  testResult    TestResult?                @relation(fields: [testResultId], references: [id], onDelete: SetNull)
   record        ConsultationRecord?
   notifications Notification[]
   // Pre-consultation AI guidance (ADR 0014). Advises the counselor how to
@@ -317,6 +318,7 @@ model TestResult {
 
   recordMetrics ConsultationRecordMetric[]
   bookings      Booking[]
+  qaSessions    QaSession[]
 
   @@index([subjectType, subjectId])
 }
@@ -343,10 +345,10 @@ enum ChallengeEnrollmentStatus {
 }
 
 model Challenge {
-  id          String @id @default(cuid())
-  name        String
-  category    String
-  description String
+  id                String  @id @default(cuid())
+  name              String
+  category          String
+  description       String
   // Advisory only: a sort/hint for which Challenge fits a serviceType. Never a
   // hard filter — the full catalog is always offered.
   linkedServiceType String?
@@ -430,4 +432,62 @@ model FamilyLink {
   @@index([inviteeCustomerId])
   @@index([code])
   @@index([status])
+}
+
+// ── Customer-facing AI Q&A on test results (ADR 0018) ───────────────────────
+// Additive, interpretation-only Q&A grounded on the customer's own metrics.
+// LLM (Ollama reuse) on the critical path with deterministic template fallback.
+
+enum QaMessageRole {
+  USER
+  ASSISTANT
+}
+
+// ASSISTANT message provenance. null on USER turns. FALLBACK_* records WHY the
+// deterministic template was used instead of the LLM (analytics + observability).
+enum QaMessageSource {
+  LLM
+  FALLBACK_UNAVAILABLE
+  FALLBACK_TIMEOUT
+  FALLBACK_SATURATED
+  FALLBACK_GUARDRAIL
+}
+
+enum QaFeedback {
+  YES
+  NO
+}
+
+model QaSession {
+  id           String      @id @default(cuid())
+  customerId   String // asker (JWT.customerId), not necessarily the subject
+  subjectType  SubjectType // subject snapshot at ask time (deflection attribution accuracy)
+  subjectId    String // = Customer.id (self or ACCEPTED family partner)
+  testResultId String? // nullable; SetNull on TestResult deletion
+  createdAt    DateTime    @default(now())
+
+  customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  testResult TestResult? @relation(fields: [testResultId], references: [id], onDelete: SetNull)
+  messages   QaMessage[]
+
+  @@index([customerId])
+  @@index([customerId, createdAt])
+  @@index([subjectType, subjectId]) // subject-attributed deflection query (AC10)
+}
+
+model QaMessage {
+  id                 String           @id @default(cuid())
+  seq                Int              @default(autoincrement()) // monotonic insert order; the deterministic thread sort key. createdAt alone ties because the USER+ASSISTANT rows of one turn are inserted in a single transaction and share CURRENT_TIMESTAMP.
+  sessionId          String
+  role               QaMessageRole
+  text               String
+  groundedMetricRefs String[]         @default([]) // cited metricKeys (ASSISTANT). Intentional read-only denormalization — see ADR 0018.
+  source             QaMessageSource? // null on USER; ASSISTANT is LLM or FALLBACK_*
+  inScope            Boolean? // USER-turn scope classification (false ⇒ decline/escalate)
+  feedback           QaFeedback? // ASSISTANT turn, null until rated (AC7)
+  createdAt          DateTime         @default(now())
+
+  session QaSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, seq])
 }
