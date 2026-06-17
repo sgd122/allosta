@@ -59,8 +59,10 @@ export function CompleteBookingDialog({ intent, onClose, onCompleted, onConflict
       onCompleted?.();
     },
     onError: (err) => {
-      const isConflict =
-        err instanceof Error && err.message.startsWith('409');
+      // pfetch throws `Error('<status>: <body>')`, so the status is the leading
+      // token. Anchor on a 409 word boundary so a body that merely contains
+      // "409" (or a status like 4090) can't false-positive.
+      const isConflict = err instanceof Error && /^409\b/.test(err.message);
       if (isConflict) {
         void queryClient.invalidateQueries({ queryKey: ['availabilityCalendar'] });
         onClose();

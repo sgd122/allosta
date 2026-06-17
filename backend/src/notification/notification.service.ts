@@ -137,9 +137,17 @@ export class NotificationService {
       throw new ForbiddenException('Notification does not belong to this customer');
     }
 
+    // Already read — return as-is. Skips a redundant write and preserves the
+    // original (first) read timestamp; re-marking stays idempotent. Strip the
+    // joined `booking` so the shape matches the update path below.
+    if (notification.readAt) {
+      const { booking: _booking, ...rest } = notification;
+      return rest;
+    }
+
     return this.prisma.notification.update({
       where: { id: notificationId },
-      data: { readAt: notification.readAt ?? new Date() },
+      data: { readAt: new Date() },
     });
   }
 
