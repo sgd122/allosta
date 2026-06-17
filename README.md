@@ -234,14 +234,19 @@ pnpm exec jest --config ./test/jest-e2e.json --runInBand
 | `availability.aggregation.spec.ts` | availability-calendar 시간대 집계(availableCount), 파생 가용성 규칙                                                                         | AC8                                  |
 | `analytics-contact.spec.ts`        | CallLog contactAttempts·callOutcomeDistribution·noShowWithoutContactRate 집계 (island A=0.5 / B=0 / C=null 패턴)                             | AC-6 (AC-L3)                         |
 | `call-log.spec.ts`                 | `POST .../calls` 생성·소유권(403)·없음(404) + `PATCH .../calls/:callId` 편집·소유권·교차예약(404)·status 불변 + `DELETE .../calls/:callId` 삭제·소유권(403)·교차예약(404)·status 불변 | AC-L1, AC-L2, AC-L5                  |
+| `family-consent-booking.spec.ts`   | 가족 동의의 **예약-계층** 적용: ACCEPTED 링크 시 가족 검사결과로 예약 201(subject 서버 파생=가족), REVOKE 후 동일 시도 403(동의 철회 즉시 반영)                                | FR9 (소비 g)                          |
+| `notification-read.spec.ts`        | 알림 읽음 처리: 본인 알림 `PATCH /notifications/:id/read` → 200·`readAt` 설정·멱등, 타 고객 → 403(소유권)                                                                       | FR5 (읽음 상태)                       |
 
 ### 브라우저 E2E (Playwright)
 
 골든패스의 도메인 로직은 위 백엔드 통합 테스트가 증명합니다. 그 위에 **브라우저에서만 존재하는 경계**
 — Next.js 미들웨어 라우트 가드 · `/api/proxy` 쿠키→Authorization 브리지 · httpOnly 세션 쿠키 ·
-역할별 홈 라우팅 — 를 실제 크로미움에서 검증하는 Playwright 스모크 스위트를 추가했습니다
-(`frontend/e2e/auth-routing.spec.ts`). 미인증 보호 라우트 차단, 3개 역할(고객/상담사/관리자) 로그인 후
-각자 홈 진입, 역할 불일치 시 본인 홈으로 되돌림을 커버합니다.
+역할별 홈 라우팅 — 를 실제 크로미움에서 검증하는 Playwright 스위트를 두 갈래로 둡니다.
+`frontend/e2e/auth-routing.spec.ts`는 미인증 보호 라우트 차단, 3개 역할(고객/상담사/관리자) 로그인 후
+각자 홈 진입, 역할 불일치 시 본인 홈으로 되돌림을 커버합니다. `frontend/e2e/core-journeys.spec.ts`는
+한 걸음 더 들어가 **각 역할 랜딩 화면이 프록시를 통해 실제 시드 데이터를 페칭·렌더**하는지 검증합니다
+(고객=가용 캘린더의 예약 가능 날짜, 상담사=일정 콘솔, 관리자=전환율 분석). 읽기 전용이라 시드 DB를
+변형하지 않으며, 생성형 예약→기록→집계 체인은 위 `golden-path.e2e-spec.ts`가 API 계층에서 증명합니다.
 
 ```bash
 # 선행: docker compose up -d  +  백엔드(pnpm start:dev, :3000) + seed
