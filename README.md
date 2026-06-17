@@ -236,6 +236,12 @@ pnpm exec jest --config ./test/jest-e2e.json --runInBand
 | `call-log.spec.ts`                 | `POST .../calls` 생성·소유권(403)·없음(404) + `PATCH .../calls/:callId` 편집·소유권·교차예약(404)·status 불변 + `DELETE .../calls/:callId` 삭제·소유권(403)·교차예약(404)·status 불변 | AC-L1, AC-L2, AC-L5                  |
 | `family-consent-booking.spec.ts`   | 가족 동의의 **예약-계층** 적용: ACCEPTED 링크 시 가족 검사결과로 예약 201(subject 서버 파생=가족), REVOKE 후 동일 시도 403(동의 철회 즉시 반영)                                | FR9 (소비 g)                          |
 | `notification-read.spec.ts`        | 알림 읽음 처리: 본인 알림 `PATCH /notifications/:id/read` → 200·`readAt` 설정·멱등, 타 고객 → 403(소유권)                                                                       | FR5 (읽음 상태)                       |
+| `qa-scope.spec.ts`                 | 순수 가드: `classifyScope` 질문 게이트(해석 in / 진단·약·식단 out) + `violatesAnswerGuardrail` 답변 후처리(조언 트립, 면책 문구는 통과) + 결정론 템플릿·정규화                                | AC5, AC6, AC4 (ADR 0018)             |
+| `qa-flow.e2e-spec.ts`              | 세션 생성→멀티턴 답변(본인 지표 그라운딩, 시드 값 등장)→`$transaction` 원자성(USER/ASSISTANT 짝)→피드백 + 질문측 거절(escalate·`FALLBACK_GUARDRAIL`)                          | AC2, AC3, AC7, AC9, AC5, AC6         |
+| `qa-fallback.e2e-spec.ts`         | Ollama 불가(dead port) → 200·`FALLBACK_UNAVAILABLE`·그라운딩 템플릿(에러 없음, fail-soft)                                                                                    | AC4                                  |
+| `qa-access.e2e-spec.ts`           | 비소유 리포트 질의 403 + ACCEPTED FamilyLink 양성(201) + 세션 GET·피드백 PATCH IDOR 403                                                                                       | AC11                                 |
+| `qa-analytics.e2e-spec.ts`        | 이탈 지표(전역 스코프): subject 기준 귀속 + 미성숙 윈도우 제외 + 윈도우 경계(+6d 전환 / +8d 이탈) → behavioralDeflectionRate·helpfulnessRate                                  | AC10                                 |
+| `qa-ratelimit.e2e-spec.ts`        | write 엔드포인트 **고객(customerId) 단위 레이트 리밋**: 한도 초과 시 429, 다른 고객은 같은 IP라도 무영향(per-customer 스코프) — `QaThrottlerGuard`                              | ADR 0018 (보안)                       |
 
 ### 브라우저 E2E (Playwright)
 
@@ -247,6 +253,9 @@ pnpm exec jest --config ./test/jest-e2e.json --runInBand
 한 걸음 더 들어가 **각 역할 랜딩 화면이 프록시를 통해 실제 시드 데이터를 페칭·렌더**하는지 검증합니다
 (고객=가용 캘린더의 예약 가능 날짜, 상담사=일정 콘솔, 관리자=전환율 분석). 읽기 전용이라 시드 DB를
 변형하지 않으며, 생성형 예약→기록→집계 체인은 위 `golden-path.e2e-spec.ts`가 API 계층에서 증명합니다.
+`frontend/e2e/qa-customer-journey.spec.ts`는 고객용 AI Q&A 여정(`/results` 패널 열기 → 그라운딩 답변 →
+평가 → 범위 밖 질문 시 면책 + 상담 예약 CTA → `/book`)과 **AI 없이도 예약 플로우가 그대로 동작함(AC8 회귀)**
+을 브라우저에서 검증합니다(ADR 0018).
 
 ```bash
 # 선행: docker compose up -d  +  백엔드(pnpm start:dev, :3000) + seed
@@ -317,7 +326,8 @@ allosta/
 │       ├── test-result-metrics.spec.ts       # BioCom: 지표 참조범위/상태 노출
 │       ├── cascade-cleanup.spec.ts           # BioCom: cleanupSeeded cascade 무orphan
 │       ├── analytics-contact.spec.ts         # CallLog 집계(contactAttempts·callOutcomeDistribution·noShowWithoutContactRate) + island 패턴
-│       └── call-log.spec.ts                  # POST /counselor/bookings/:bookingId/calls 생성·소유권·404
+│       ├── call-log.spec.ts                  # POST /counselor/bookings/:bookingId/calls 생성·소유권·404
+│       └── qa-ratelimit.e2e-spec.ts          # QA write 고객 단위 레이트 리밋(429·per-customer, ADR 0018)
 └── frontend/                       # Next.js 14 App Router · FSD(ADR 0009, types/constants 세그먼트 0012) · Tailwind on Radix + Jotai(ADR 0011)
     ├── tailwind.config.ts          # 색/반경을 Radix 런타임 CSS 변수에 매핑 · preflight OFF (ADR 0011)
     └── src/
@@ -354,3 +364,4 @@ allosta/
 | `20260612120000_ai_pre_consultation_guidance` | **상담 전 AI 가이던스** — `Booking.concern String?`(고객 사전질문, write-only) + `Booking.briefOpenedAt DateTime?`(브리핑 최초 열람 시각) 추가. `ConsultationBriefGuidance`(`id, bookingId @unique, status BriefGuidanceStatus @default(FALLBACK), model String?, content, createdAt, updatedAt`) 신규 모델 + `BriefGuidanceStatus { FALLBACK UPGRADED }` enum + `Booking` 1:1 `onDelete: Cascade` 관계. 다가오는 상담 진행 안내를 예약 단위로 보관(사후 요약 아님). 순수 additive — 기존 테이블 ALTER 없음. |
 | `20260612140000_customer_no_overlap`          | **고객 시간대 중복 방지** — `btree_gist` 확장 + `Booking.slotStartAt/slotEndAt`(비정규화 슬롯 윈도우, 백필 후 NOT NULL) 추가 + GiST `EXCLUDE` 제약 `booking_customer_no_overlap`(`customerId WITH =`, `tsrange(slotStartAt,slotEndAt) WITH &&`, `WHERE status IN ('PENDING','CONFIRMED')`). 한 고객이 겹치는 시간대에 복수 활성 예약을 갖지 못하도록 DB 레벨 강제(ADR 0015). |
 | `20260613043835_add_call_log`                 | **통화 시도 증거 레이어** — `CallOutcome` enum(CONNECTED/NO_ANSWER/INVALID) + `CallLog` 모델(bookingId FK, counselorId FK, outcome, note?, createdAt, 두 인덱스 `@@index([bookingId])·@@index([counselorId])`, Cascade 삭제) 추가. `Customer.phone`은 기존 필드 — 브리핑 투영만 추가(스키마 무변경). 순수 additive — 기존 테이블 ALTER 없음(ADR 0016). |
+| `20260617100352_add_qa`                       | **고객용 검사결과 AI Q&A** — `QaMessageRole`/`QaMessageSource{LLM,FALLBACK_UNAVAILABLE,FALLBACK_TIMEOUT,FALLBACK_SATURATED,FALLBACK_GUARDRAIL}`/`QaFeedback` enum + `QaSession`(customerId·subjectType·subjectId 스냅샷·testResultId nullable `SetNull`, 3 인덱스)·`QaMessage`(role·text·`groundedMetricRefs String[]`·source·inScope·feedback) 모델 추가. `Customer`/`TestResult` 역참조만 추가. 순수 additive — 기존 테이블 ALTER 없음(ADR 0018). |
