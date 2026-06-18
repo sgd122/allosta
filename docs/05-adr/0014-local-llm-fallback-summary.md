@@ -4,6 +4,8 @@
 - **날짜**: 2026-06-12
 - **관련**: [0006 ops-hardening](./0006-ops-hardening.md)(OpsScheduler `@Interval` 스윕 패턴), [0007 challenge-enrollment](./0007-challenge-enrollment.md)(createRecord 트랜잭션 구조), [04-system-design §2·§10·§11](../04-system-design.md), [02-requirements FR14·AC-P1~P7](../02-requirements.md)
 
+**결정 (한 줄):** 예약 단위 `ConsultationBriefGuidance` 엔티티를 두고, 브리핑 열람 시 결정론 템플릿 FALLBACK을 즉시 보장하며, 로컬 Ollama 업그레이드는 `OpsScheduler @Interval` 스윕으로 비동기 수행한다.
+
 ## 맥락
 
 상담사가 **다가오는 상담을 어떻게 진행할지**를 미리 안내받으면 상담 준비 시간이 줄고 상담 품질이 높아진다는 요구가 제기되었다. 안내는 대상자의 검사 지표 + 과거 상담 기록(+ 고객 선택 `concern`)에서 파생되며, 상담사 **사전 브리핑** 패널에 노출된다(완료된 기록이 아니라 예약 단위 안내).
@@ -13,19 +15,19 @@
 이 기능을 설계할 때 세 가지 긴장이 충돌한다.
 
 1. **재현성 불가침**: 평가자 환경에 Ollama가 없을 수 있다. LLM이 golden path의 critical path에 있으면 `docker compose up` + seed만으로 끝까지 통과해야 하는 NFR1이 깨진다.
-2. **결정론 브리핑 보존**: 사전 브리핑은 검사 지표·과거 기록·가족 맥락을 서버가 결정론적으로 조립하는 읽기 전용 산출물이다. LLM 가이던스는 이 결정론 조립을 대체하지 않고 **보강**해야 한다 — 가이던스가 없어도 브리핑은 항상 성립한다.
+2. **결정론 브리핑 보존**: 사전 브리핑은 검사 지표·과거 기록·가족 맥락을 서버가 결정론적으로 조립하는 읽기 전용 산출물이다. LLM 가이던스는 이 결정론 조립을 대체하지 않고 **보강**해야 한다. 가이던스가 없어도 브리핑은 항상 성립한다.
 3. **테스트 가능성**: LLM 텍스트는 비결정적이므로 `assert`할 수 없다. 평가에서 증명 수단은 테스트이므로, 결정론 경계와 비결정론 경계를 명확히 갈라야 한다.
 
-추가로, 업그레이드 메커니즘으로 `@OnEvent`(fire-and-forget) 방식을 검토했으나 `@nestjs/event-emitter`가 `package.json`에 설치되어 있지 않아 빌드 불가이고, 분리된 Promise는 미처리 거부·재시작 시 유실·단위 테스트 불가 문제가 있어 기각됐다.
+추가로, 업그레이드 메커니즘으로 `@OnEvent`(fire-and-forget) 방식을 검토했으나 기각됐다. `@nestjs/event-emitter`가 `package.json`에 설치되어 있지 않아 빌드가 불가하고, 분리된 Promise는 미처리 거부·재시작 시 유실·단위 테스트 불가 문제가 있기 때문이다.
 
 ## 결정
 
 **예약 단위 `ConsultationBriefGuidance` 1:1 엔티티를 두고, 브리핑 열람 시 결정론 템플릿 FALLBACK 가이던스를 보장하며, 로컬 Ollama 업그레이드는 OpsScheduler `@Interval` 스윕(`sweepPendingUpgrades`)으로 수행한다.**
 
 - **예약 단위 엔티티**: `ConsultationBriefGuidance { id, bookingId @unique, status BriefGuidanceStatus @default(FALLBACK), model String?, content, createdAt, updatedAt }`. `bookingId @unique`가 스윕의 멱등 업서트 타깃을 제공한다. `Booking` 1:1 관계는 `onDelete: Cascade`로 선언한다. 가이던스가 **예약**에 귀속되므로(상담 기록이 아님) 상담 전에도 항상 존재할 수 있다.
-- **브리핑 열람 시 FALLBACK 보장**: 상담사가 브리핑을 열면(`getBookingBrief` → `GET /counselor/bookings/:id/brief`) `GuidanceService.ensureFallbackForBooking(bookingId)`가 결정론 템플릿(검사 지표 이상 플래그 + 과거 기록 + `concern` 기반 진행 안내)을 `status=FALLBACK`으로 보장한다 — 항상 즉시 완료, Ollama 의존 없음. `createRecord`는 가이던스를 건드리지 않는다(생명주기 완전 분리).
-- **OpsScheduler 스윕**: `OpsSchedulerService.handleInterval()`이 `sweepPendingUpgrades()`를 호출한다(`sweepNoShows` 형제). 스윕은 `status=FALLBACK` 행만 대상으로 하며, Ollama가 도달 가능하면 `gemma4:e4b`로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade하지 않는다. 멱등. `@Interval`은 이전 실행을 await하지 않으므로(setInterval 의미론), 로컬 LLM 생성이 5초를 넘기면 다음 틱과 겹쳐 동일 FALLBACK 건에 중복 Ollama 요청이 발행될 수 있다 — `GuidanceService`의 인스턴스 단위 `isSweeping` 락(try/finally 해제)으로 겹치는 스윕을 drop한다.
-- **LLM 어댑터 경계**: `GuidanceGeneratorInterface`로 `TemplateGuidance`(결정론)와 `OllamaGuidance`(로컬 LLM)를 분리한다. `OllamaGuidance`의 `available()` 헬스체크가 실패하면 스윕은 해당 사이클을 건너뛴다. 환경 변수 미설정 시 기본값(`OLLAMA_BASE_URL=http://localhost:11434`, `SUMMARY_MODEL=gemma4:e4b`)을 사용하며 startup assertion 없음 — **fail-soft**.
+- **브리핑 열람 시 FALLBACK 보장**: 상담사가 브리핑을 열면(`getBookingBrief` → `GET /counselor/bookings/:id/brief`) `GuidanceService.ensureFallbackForBooking(bookingId)`가 결정론 템플릿(검사 지표 이상 플래그 + 과거 기록 + `concern` 기반 진행 안내)을 `status=FALLBACK`으로 즉시 보장한다. Ollama 의존이 없고 항상 즉시 완료된다. `createRecord`는 가이던스를 건드리지 않는다(생명주기 완전 분리).
+- **OpsScheduler 스윕**: `OpsSchedulerService.handleInterval()`이 `sweepPendingUpgrades()`를 호출한다(`sweepNoShows` 형제). 스윕은 `status=FALLBACK` 행만 대상으로 하며, Ollama가 도달 가능하면 `gemma4:e4b`로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade하지 않는다(멱등). `@Interval`은 이전 실행을 await하지 않으므로(setInterval 의미론), 로컬 LLM 생성이 5초를 넘기면 다음 틱과 겹쳐 동일 FALLBACK 건에 중복 Ollama 요청이 발행될 수 있다. 이를 `GuidanceService`의 인스턴스 단위 `isSweeping` 락(try/finally 해제)으로 겹치는 스윕을 drop해 방지한다.
+- **LLM 어댑터 경계**: `GuidanceGeneratorInterface`로 `TemplateGuidance`(결정론)와 `OllamaGuidance`(로컬 LLM)를 분리한다. `OllamaGuidance`의 `available()` 헬스체크가 실패하면 스윕은 해당 사이클을 건너뛴다. 환경 변수 미설정 시 기본값(`OLLAMA_BASE_URL=http://localhost:11434`, `SUMMARY_MODEL=gemma4:e4b`)을 사용하며 startup assertion 없음(**fail-soft**).
 - **수동 트리거 없음**: 데모용 수동 엔드포인트를 두지 않는다. 서버가 `@Interval` 스윕으로 업그레이드를 자동 수행하므로, Ollama+모델이 있으면 ~1 스윕 사이클 내에 자동으로 UPGRADED가 노출된다.
 
 ## 대안

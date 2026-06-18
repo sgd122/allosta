@@ -4,14 +4,17 @@
 - **날짜**: 2026-06-09
 - **결정자**: 설계자 (솔로 과제)
 
+**결정 (한 줄):** 3-role RBAC·스케줄러·TypeScript 단일 언어 공유를 선언적으로 표현하기 위해 NestJS를 채택한다.
+
 ---
 
 ## Context (결정 배경)
 
 2주 솔로 평가과제에서 백엔드 프레임워크를 선택해야 한다. 과제 명세는 NestJS 또는 FastAPI를 허용한다.
+
 본 과제의 핵심 데모 포인트는 다음 세 가지다.
 
-1. **3-role RBAC** — 고객/상담사/관리자 역할을 선언적으로 적용하고, 평가자가 "의도가 코드로 드러나는가"를 볼 수 있어야 한다.
+1. **3-role RBAC** — 고객/상담사/관리자 역할을 선언적으로 적용하고, 평가자가 "의도가 코드로 드러나는가"를 확인할 수 있어야 한다.
 2. **알림·운영 스케줄러** — 예약 리마인더 발송과 no-show·stale-pending 스윕을 주기적으로 발화하는 스케줄 잡이 내장되어야 한다.
 3. **단일 언어 모노레포** — 프론트엔드(React/TypeScript)와 백엔드가 같은 언어를 공유하면 DTO/타입 중복 유지비가 없다.
 
@@ -25,10 +28,12 @@
 
 구체적 선택:
 
-- 인증/RBAC: `@nestjs/jwt` + `PassportStrategy` + `RolesGuard` (Guard 기반 선언적 접근제어)
-- ORM: Prisma (스키마 first, 마이그레이션 자동화, TypeScript 타입 자동 생성)
-- 스케줄러: `@nestjs/schedule` (데코레이터 기반 cron 잡, 외부 의존 없음)
-- API 문서: `@nestjs/swagger` (OpenAPI 자동 생성)
+| 관심사 | 채택 수단 |
+|--------|----------|
+| 인증/RBAC | `@nestjs/jwt` + `PassportStrategy` + `RolesGuard` (Guard 기반 선언적 접근제어) |
+| ORM | Prisma (스키마 first, 마이그레이션 자동화, TypeScript 타입 자동 생성) |
+| 스케줄러 | `@nestjs/schedule` (데코레이터 기반 cron 잡, 외부 의존 없음) |
+| API 문서 | `@nestjs/swagger` (OpenAPI 자동 생성) |
 
 ---
 
@@ -45,7 +50,7 @@
 
 **긍정적 영향**
 
-- `@RolesGuard()` + `@Roles(Role.ADMIN)` 데코레이터로 역할 접근제어 의도가 코드 수준에서 즉시 가독되며, 평가자가 Guard 레이어와 서비스 레이어의 분리를 명확히 확인할 수 있다.
+- `@RolesGuard()` + `@Roles(Role.ADMIN)` 데코레이터로 역할 접근제어 의도가 코드 수준에서 즉시 가독된다. 평가자가 Guard 레이어와 서비스 레이어의 분리를 명확히 확인할 수 있다.
 - `@nestjs/schedule`의 `@Cron()` 데코레이터로 리마인더 스케줄러가 추가 인프라 없이 동작한다(재현성 동인 충족).
 - FE/BE가 TypeScript 단일 언어이므로 DTO/타입을 양쪽 언어에서 이중 정의할 필요가 없다. 공유 타입 패키지(`packages/shared-types`)로 한 곳에서 관리하는 경로도 열려 있으나, 현재는 도입하지 않았다(YAGNI — ADR 0005 참조).
 

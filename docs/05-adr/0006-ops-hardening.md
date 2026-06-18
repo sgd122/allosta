@@ -4,6 +4,8 @@
 - **날짜**: 2026-06-10 (개정 2026-06-12)
 - **결정자**: 설계자 (솔로 과제)
 
+**결정 (한 줄):** 기존 모듈을 그대로 확장해 no-show 스윕·stale-pending 스윕·운영 Analytics·슬롯 CRUD를 닫는다. 고객 대기열은 reasoned Phase 2 Non-Goal로 제거한다.
+
 ---
 
 > **개정 노트 (2026-06-12)**: 본 ADR의 최초안은 네 개의 열린 루프(no-show · **waitlist 전환** · 운영 깔때기 Analytics · 슬롯 CRUD)를 닫는 것을 다뤘다. 이후 R4(만석 이탈)의 1차 대안을 **셀프서비스 가용 캘린더**로 명확히 하면서 **고객 대기열(waitlist/queue)을 reasoned Phase 2 Non-Goal로 제거**했다(근거: 03-mvp-scope §2.8 — limited counselor pool에서 가용 탐색이 더 높은 레버리지의 1차 해법, 대기열은 TTL/FIFO/promotion 복잡도 대비 MVP 가치 낮음). 따라서 아래 본문에서 **waitlist 전환 루프(루프 2)와 `waitlistConversionRate` 지표는 더 이상 적용되지 않으며**, 본 ADR이 확정하는 ops-hardening은 **no-show 스윕 + stale-pending 스윕 + 운영 깔때기 Analytics + 슬롯 CRUD**다. 취소는 promotion 없이 슬롯을 가용 목록에 즉시 재노출시킬 뿐이다.
@@ -14,7 +16,7 @@
 
 1. **No-show 루프**: 상담사가 기록을 남기지 않은 채 슬롯이 종료되어도 상태가 `CONFIRMED`로 고착된다. `NO_SHOW` 상태가 없으므로 참석률·전환 깔때기 수치가 부정확하다.
 
-2. **운영 깔때기 Analytics 공백**: `GET /admin/analytics`에 예약 상태별 수(`booked / confirmed / completed / noShow / cancelled`), `noShowRate`, `slotUtilization`가 없어 운영 현황 대시보드가 미완성이다.
+2. **운영 깔때기 Analytics 공백**: `GET /admin/analytics`에 예약 상태별 수(`booked / confirmed / completed / noShow / cancelled`)와 `noShowRate`, `slotUtilization`가 없어 운영 현황 대시보드가 미완성이다.
 
 3. **가용 슬롯 관리 인터페이스 부재**: 상담사·관리자가 API를 통해 `AvailabilitySlot`을 직접 생성·수정·삭제할 수 없다. seed 데이터 또는 직접 DB 조작에 의존한다.
 
@@ -26,10 +28,10 @@
 
 **옵션 A — 현존 모듈 확장(Extend In Place)을 채택한다.**
 
-- `BookingStatus`에 `NO_SHOW` 값을 추가(additive enum 확장, 기존 행 영향 없음)한다.
-- 취소(`CANCELLED`)는 해당 슬롯을 부분 unique 인덱스 조건(`status IN ('PENDING','CONFIRMED')`)에서 빼는 것으로 충분하다 — 슬롯이 가용 캘린더에 즉시 재노출되며, 별도의 promotion·통지 단계는 없다(만석 1차 대안 = 가용 캘린더; 고객 대기열은 Phase 2 Non-Goal).
+- `BookingStatus`에 `NO_SHOW` 값을 추가한다(additive enum 확장, 기존 행 영향 없음).
+- 취소(`CANCELLED`)는 해당 슬롯을 부분 unique 인덱스 조건(`status IN ('PENDING','CONFIRMED')`)에서 빼는 것으로 충분하다. 슬롯이 가용 캘린더에 즉시 재노출되며, 별도의 promotion·통지 단계는 없다(만석 1차 대안 = 가용 캘린더; 고객 대기열은 Phase 2 Non-Goal).
 - 스윕 로직(`sweepNoShows`, `sweepStalePending`)은 **도메인 서비스 메서드**에 두고, 얇은 타이머 전용 `OpsSchedulerService`(`@nestjs/schedule`)가 호출한다. 테스트는 메서드를 직접 호출한다(라이브 `@Interval` 비의존).
-- DB 마이그레이션: `ALTER TYPE ... ADD VALUE IF NOT EXISTS`로 `BookingStatus`에 `NO_SHOW`를 추가한다(enum 전용, 같은 트랜잭션에서 신규 값 사용 불가라는 PostgreSQL 제약 준수). 슬롯 CRUD는 기존 테이블만 사용하므로 추가 컬럼이 없다.
+- DB 마이그레이션: `ALTER TYPE ... ADD VALUE IF NOT EXISTS`로 `BookingStatus`에 `NO_SHOW`를 추가한다. enum 전용이며, 같은 트랜잭션에서 신규 값 사용 불가라는 PostgreSQL 제약을 준수한다. 슬롯 CRUD는 기존 테이블만 사용하므로 추가 컬럼이 없다.
 
 ---
 

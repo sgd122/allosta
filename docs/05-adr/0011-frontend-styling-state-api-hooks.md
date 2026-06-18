@@ -4,12 +4,14 @@
 - **날짜**: 2026-06-10
 - **관련**: [04-system-design §9.2.2](../04-system-design.md#922-스타일링·상태·api-훅-레이어-adr-0011), [0009 frontend-fsd-architecture](./0009-frontend-fsd-architecture.md)
 
+**결정 (한 줄):** Tailwind를 Radix Themes 위에 레이어링해 디자인 토큰을 일원화하고, 서버 상태는 TanStack Query·클라이언트 상태는 Jotai·API 훅은 슬라이스별 `queries.ts`로 표준화한다.
+
 ## 맥락
 
 FSD 구조(ADR 0009) 정착 이후, 세 가지 횡단 관심사에 컨벤션이 없었다.
 
 1. **스타일이 인라인 `style={{ ... var(--teal-11) ... }}`로 분산**(16개 컴포넌트). 디자인 토큰(이브로우 라벨·serif 헤딩·KPI 숫자·진행 바)이 코드로 표현되지 않고 파일마다 복붙·표류한다.
-2. **`useQuery`/`useMutation`이 뷰/피처 호출부에 인라인**으로 흩어져 `queryKey` 문자열이 중복되고, 무효화 키가 호출부마다 손으로 반복된다(캐시 동일성 표류 위험).
+2. **`useQuery`/`useMutation`이 뷰/피처 호출부에 인라인**으로 흩어져 `queryKey` 문자열이 중복된다. 무효화 키가 호출부마다 손으로 반복되어 캐시 동일성 표류 위험이 있다.
 3. **클라이언트 상태 관리 표준 부재**.
 
 ## 결정
@@ -17,9 +19,9 @@ FSD 구조(ADR 0009) 정착 이후, 세 가지 횡단 관심사에 컨벤션이 
 ### 1. Tailwind v3를 Radix Themes "위에" 레이어링
 
 - **공존 모델**: Radix Themes가 컴포넌트 프리미티브·런타임 테마(색/반경 CSS 변수)를 소유하고, Tailwind는 레이아웃·간격·타이포·일회성 스타일을 소유한다. Radix를 걷어내지 않는다.
-- **preflight OFF**: Radix가 자체 CSS reset을 제공하므로 Tailwind base reset은 끈다. 결과로 맨 `border` 유틸은 색이 없으므로 항상 색과 함께 쓴다(`border border-gray-5`).
-- **토큰 매핑**: `tailwind.config.ts`가 색 스케일(`teal`·`gray`·`amber`·`red`·`blue`·`violet` 1–12)과 반경(`rounded-1..4`)을 **Radix 런타임 CSS 변수에 매핑**한다(`text-teal-11` → `color: var(--teal-11)`). 값 중복이 0이고, Radix가 팔레트를 스왑(예: 다크모드)하면 Tailwind 클래스도 자동으로 따라간다. 폰트는 `font-serif`(Newsreader)·`font-mono`(IBM Plex Mono)로 매핑.
-- **반복 제거**: 재등장하는 토큰 조합은 `shared/ui` 프리미티브로 1회 정의 — `Eyebrow`(mono/대문자/teal 라벨), `StatNumber`(serif KPI 숫자), `Meter`(진행 바). 동적 톤 색은 **정적 클래스 맵**(`shared/ui/tone.ts`의 `toneText`/`toneFill`)으로 변환한다. `text-${tone}-11` 같은 템플릿 문자열 클래스는 Tailwind가 purge하므로 금지.
+- **preflight OFF**: Radix가 자체 CSS reset을 제공하므로 Tailwind base reset은 끈다. 그 결과 맨 `border` 유틸은 색이 없으므로 항상 색과 함께 쓴다(`border border-gray-5`).
+- **토큰 매핑**: `tailwind.config.ts`가 색 스케일(`teal`·`gray`·`amber`·`red`·`blue`·`violet` 1–12)과 반경(`rounded-1..4`)을 **Radix 런타임 CSS 변수에 매핑**한다(`text-teal-11` → `color: var(--teal-11)`). 값 중복이 0이고, Radix가 팔레트를 스왑(예: 다크모드)하면 Tailwind 클래스도 자동으로 따라간다. 폰트는 `font-serif`(Newsreader)·`font-mono`(IBM Plex Mono)로 매핑한다.
+- **반복 제거**: 재등장하는 토큰 조합은 `shared/ui` 프리미티브로 1회 정의한다 — `Eyebrow`(mono/대문자/teal 라벨), `StatNumber`(serif KPI 숫자), `Meter`(진행 바). 동적 톤 색은 **정적 클래스 맵**(`shared/ui/tone.ts`의 `toneText`/`toneFill`)으로 변환한다. `text-${tone}-11` 같은 템플릿 문자열 클래스는 Tailwind가 purge하므로 금지한다.
 - **globals.css**: keyframes(`rise`)·로그인 화면 그라디언트/오빗 등 **진성 CSS만** 유지하고, 컴포넌트 인라인 토큰 스타일은 제거한다.
 
 ### 2. 서버 상태 = TanStack Query, 클라이언트 상태 = Jotai

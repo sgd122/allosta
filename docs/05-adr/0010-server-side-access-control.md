@@ -4,26 +4,28 @@
 - **날짜**: 2026-06-10
 - **관련**: [04-system-design §8 권한 2층](../04-system-design.md#8-권한-2층-설계), [§9.3 JWT 흐름](../04-system-design.md#93-jwt-흐름-프론트엔드), [0009 frontend-fsd](./0009-frontend-fsd-architecture.md)
 
+**결정 (한 줄):** Edge 미들웨어(`src/middleware.ts`)를 추가해 보호 라우트에 서버측 JWT 서명 검증을 적용하고, 서명 미검증 `decodeToken()` 경로를 제거한다.
+
 ## 맥락
 
 초기 프론트엔드 인증은 다음 두 약점이 있었다.
 
-1. **보호 페이지의 서버측 가드 부재**: `(admin)`·`(counselor)`·`(customer)` 라우트 그룹은 정적 프리렌더된 클라이언트 shell이었고, `middleware.ts`가 존재하지 않았다. 그 결과 `/dashboard`·`/schedule` 등이 **쿠키 없이도 200**으로 응답했다. 실제 데이터는 백엔드 API가 보호하므로 즉시 유출은 아니지만, "SSR/서버측 역할 보호"가 요구사항이면 미충족이었다(아키텍처 다이어그램·README는 미들웨어 보호를 *주장*했으나 코드가 없었다).
+1. **보호 페이지의 서버측 가드 부재**: `(admin)`·`(counselor)`·`(customer)` 라우트 그룹은 정적 프리렌더된 클라이언트 shell이었고, `middleware.ts`가 존재하지 않았다. 그 결과 `/dashboard`·`/schedule` 등이 **쿠키 없이도 200**으로 응답했다. 실제 데이터는 백엔드 API가 보호하므로 즉시 유출은 아니지만, "SSR/서버측 역할 보호"가 요구사항이면 미충족이었다. 아키텍처 다이어그램·README는 미들웨어 보호를 *주장*했으나 코드가 없었다.
 2. **서명 미검증 디코드를 권한 판단에 사용**: `shared/auth`의 `decodeToken()`은 서명 검증 없이 payload만 파싱했고, 이를 `/api/auth/me`와 루트 `/` 리다이렉트가 사용했다. 조작된 쿠키 payload가 UI 권한 판단·라우팅에 영향을 줄 수 있었다.
 
 ## 결정
 
 **Edge 미들웨어 기반 서버측 접근제어 층**을 추가하고, 모든 권한·라우팅 판단을 **서명 검증된 클레임** 위에서만 수행한다.
 
-- **`src/middleware.ts`** (Next가 `src/` 프로젝트에서 요구하는 위치): 보호 prefix 요청에 대해 쿠키 JWT를 검증하고
+- **`src/middleware.ts`** (Next가 `src/` 프로젝트에서 요구하는 위치): 보호 prefix 요청에 대해 쿠키 JWT를 검증하고 아래 세 경우를 처리한다.
   - 미인증·위조·만료 → `307 /login` (+ 쿠키 삭제)
   - 역할 불일치 → 본인 홈(`homePathForRole`)으로 `307`
   - 정상 → 통과
-  `config.matcher`로 7개 보호 prefix만 매칭(`/login`·`/`·`/api/**`·정적 자산 무관).
-- **서명 검증 (`shared/auth/verify.ts`)**: `jose.jwtVerify`로 **서명 + `exp` 검증**. 알고리즘을 `algorithms: ['HS256']`로 고정하고 `requiredClaims: ['exp']`로 **만료 없는 토큰을 거부**한다(서명만 유효한 무기한 토큰 차단). 백엔드와 동일한 `JWT_SECRET` 사용 — 코드 fallback(`dev-only-change-me-in-production`)을 FE·BE·양쪽 `.env.example`에 **단일 값으로 통일**(불일치 시 토큰 검증 실패 → 무한 `/login` 되튕김 방지). 프로덕션에서 `JWT_SECRET` 부재 시 **fail-closed**(throw → 모든 토큰 무효 처리)로, 잘 알려진 기본 secret을 신뢰해 위조 토큰을 통과시키지 않는다. `jose`를 택한 이유는 미들웨어가 도는 **Edge 런타임 호환**(Node 전용 `jsonwebtoken` 불가). `server-only`/`next/headers`를 import 하지 않아 미들웨어·Route Handler·Server Component가 모두 재사용한다.
-- **접근 정책 (`shared/auth/access.ts`)**: 라우트→역할 매핑(`requiredRoleForPath`)과 역할→홈(`homePathForRole`)을 순수 함수로 단일화. 라우트 그룹의 단일 진실원.
-- **`decodeToken` 제거**: 서명 미검증 디코드 경로를 삭제. `/api/auth/me`와 `/`는 `verifySession`(검증)으로 전환 → 조작 쿠키는 401/리다이렉트.
-- **방어 심층화**: 미들웨어는 1차(접근제어) 층, NestJS는 2차(서명 + 자원 소유권, 데이터 경계) 층. 상호 대체가 아니다.
+  `config.matcher`로 7개 보호 prefix만 매칭한다(`/login`·`/`·`/api/**`·정적 자산 무관).
+- **서명 검증 (`shared/auth/verify.ts`)**: `jose.jwtVerify`로 **서명 + `exp` 검증**을 수행한다. 알고리즘을 `algorithms: ['HS256']`로 고정하고 `requiredClaims: ['exp']`로 **만료 없는 토큰을 거부**한다(서명만 유효한 무기한 토큰 차단). 백엔드와 동일한 `JWT_SECRET`을 사용한다. 코드 fallback(`dev-only-change-me-in-production`)을 FE·BE 양쪽 `.env.example`에 **단일 값으로 통일**한다(불일치 시 토큰 검증 실패 → 무한 `/login` 되튕김 방지). 프로덕션에서 `JWT_SECRET` 부재 시 **fail-closed**(throw → 모든 토큰 무효 처리)로 동작해, 잘 알려진 기본 secret을 신뢰해 위조 토큰을 통과시키지 않는다. `jose`를 택한 이유는 미들웨어가 도는 **Edge 런타임 호환**(Node 전용 `jsonwebtoken` 불가). `server-only`/`next/headers`를 import하지 않아 미들웨어·Route Handler·Server Component가 모두 재사용한다.
+- **접근 정책 (`shared/auth/access.ts`)**: 라우트→역할 매핑(`requiredRoleForPath`)과 역할→홈(`homePathForRole`)을 순수 함수로 단일화한다. 라우트 그룹의 단일 진실원이다.
+- **`decodeToken` 제거**: 서명 미검증 디코드 경로를 삭제한다. `/api/auth/me`와 `/`는 `verifySession`(검증)으로 전환해, 조작 쿠키는 401/리다이렉트로 처리한다.
+- **방어 심층화**: 미들웨어는 1차(접근제어) 층, NestJS는 2차(서명 + 자원 소유권, 데이터 경계) 층이다. 상호 대체가 아니다.
 
 ## 대안
 

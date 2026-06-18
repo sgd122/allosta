@@ -4,24 +4,22 @@
 - **날짜**: 2026-06-13
 - **결정자**: 설계자 (솔로 과제)
 
+**결정 (한 줄):** `CallLog` 테이블을 순수 additive로 추가해 상담사의 통화 시도 결과를 기록하되, `Booking.status`는 절대 건드리지 않는다(P5 루즈 커플링).
+
 ---
 
 ## Context (결정 배경)
 
-no-show(당일 연락 두절)는 상담사가 직접 전화를 시도하지만 결과가 어디에도 기록되지 않는다.
-고객이 무응답인지, 번호가 잘못되었는지, 연결됐으나 재예약 의사가 없는지를 집계할 방법이 없다.
+no-show(당일 연락 두절)는 상담사가 직접 전화를 시도하지만 결과가 어디에도 기록되지 않는다. 고객이 무응답인지, 번호가 잘못되었는지, 연결됐으나 재예약 의사가 없는지를 집계할 방법이 없다.
 
-R6 대응으로 리마인더 알림(시뮬레이션)을 MVP에 포함하지만, 리마인더 발송 후에도 실제 연락
-시도 결과를 추적하는 레이어가 없으면 "리마인더가 의미 있었는가"를 측정할 수 없다.
+R6 대응으로 리마인더 알림(시뮬레이션)을 MVP에 포함하지만, 리마인더 발송 후에도 실제 연락 시도 결과를 추적하는 레이어가 없으면 "리마인더가 의미 있었는가"를 측정할 수 없다.
 
-또한 상담사는 예약 브리핑 시 고객에게 직접 전화를 걸어야 하는데, 현재 브리핑 API
-(`GET /counselor/bookings/:bookingId/brief`)에는 고객 전화번호(`phone`)가 포함되지 않는다.
+또한 상담사는 예약 브리핑 시 고객에게 직접 전화를 걸어야 하는데, 현재 브리핑 API(`GET /counselor/bookings/:bookingId/brief`)에는 고객 전화번호(`phone`)가 포함되지 않는다.
 
 **제약 조건**
 
 - **NFR1**: 외부 계정 수 = 0 — 발표 환경에서 외부 종속성 없이 재현 가능해야 함
-- **P5 루즈 커플링**: 통화 시도 기록이 예약 출석 상태(`Booking.status`)를 직접 변경해서는 안 됨.
-  출석 여부의 단일 진실 원천은 `Booking`에 유지된다.
+- **P5 루즈 커플링**: 통화 시도 기록이 예약 출석 상태(`Booking.status`)를 직접 변경해서는 안 됨. 출석 여부의 단일 진실 원천은 `Booking`에 유지된다.
 
 ---
 
@@ -60,33 +58,25 @@ enum CallOutcome {
   - 소유권 검증 포함 (`assertBookingOwnedByCounselor`)
 - `PATCH /counselor/bookings/:bookingId/calls/:callId` (COUNSELOR 역할만)
   - Body: `{ outcome: CallOutcome, note?: string }`
-  - 잘못 클릭한 outcome 정정·메모 수정용. 동일한 `assertBookingOwnedByCounselor`
-    소유권 경계 재사용(새 RBAC 없음) + 해당 CallLog가 그 bookingId에 속하는지 확인
-    (아니면 `404` — 교차 예약 편집 차단). `outcome` + `note`만 변경하며,
-    `Booking.status`는 절대 건드리지 않는다(P5). outcome을 수정하면 집계가
-    **읽기 시점에 재계산**되므로(Analytics는 `CallLog.outcome`을 read-time 집계)
-    별도 마이그레이션·백필이 필요 없다.
+  - 잘못 클릭한 outcome 정정·메모 수정용.
+  - 동일한 `assertBookingOwnedByCounselor` 소유권 경계 재사용(새 RBAC 없음).
+  - 해당 CallLog가 그 bookingId에 속하는지 확인한다(아니면 `404` — 교차 예약 편집 차단).
+  - `outcome` + `note`만 변경하며 `Booking.status`는 절대 건드리지 않는다(P5).
+  - outcome을 수정하면 집계가 **읽기 시점에 재계산**되므로 별도 마이그레이션·백필이 필요 없다.
 - `DELETE /counselor/bookings/:bookingId/calls/:callId` (COUNSELOR 역할만)
-  - 잘못 생성된 항목 제거용. 동일한 `assertBookingOwnedByCounselor` 소유권 경계
-    재사용(새 RBAC 없음) + 해당 CallLog가 그 bookingId에 속하는지 확인(아니면 `404`).
-    `Booking.status`는 절대 건드리지 않는다(P5). 행 삭제 후 집계가
-    **읽기 시점에 재계산**되므로(Analytics는 `CallLog.outcome`을 read-time 집계)
-    별도 마이그레이션·백필이 필요 없다.
+  - 잘못 생성된 항목 제거용.
+  - 동일한 `assertBookingOwnedByCounselor` 소유권 경계 재사용(새 RBAC 없음).
+  - 해당 CallLog가 그 bookingId에 속하는지 확인한다(아니면 `404`).
+  - `Booking.status`는 절대 건드리지 않는다(P5).
+  - 행 삭제 후 집계가 **읽기 시점에 재계산**되므로 별도 마이그레이션·백필이 필요 없다.
 
 ### brief 통화 이력 노출
 
-`GET /counselor/bookings/:bookingId/brief` 응답에 `callLogs: { id, outcome, note, createdAt }[]`
-(최신순)를 추가한다. POST 생성 응답과 달리 **brief에는 `note`를 포함**한다 —
-brief는 `phone`과 동일한 담당 상담사 소유권 경계 안에서만 노출되므로 메모를
-담당자에게 되돌려 보여 주는 것은 일관된 containment이며, 상담사가 기록을
-검토·정정할 수 있게 한다. POST 생성 응답은 여전히 `note`를 echo하지 않고,
-어떤 admin 집계에도 `note`는 노출되지 않는다(집계는 `outcome`만 읽음).
+`GET /counselor/bookings/:bookingId/brief` 응답에 `callLogs: { id, outcome, note, createdAt }[]`(최신순)를 추가한다. POST 생성 응답과 달리 **brief에는 `note`를 포함**한다. brief는 `phone`과 동일한 담당 상담사 소유권 경계 안에서만 노출되므로 메모를 담당자에게 되돌려 보여 주는 것은 일관된 containment이며, 상담사가 기록을 검토·정정할 수 있게 한다. POST 생성 응답은 여전히 `note`를 echo하지 않고, 어떤 admin 집계에도 `note`는 노출되지 않는다(집계는 `outcome`만 읽음).
 
 ### phone 노출 경계
 
-`GET /counselor/bookings/:bookingId/brief` 응답에 `phone: string` 필드를 추가한다.
-`brief` API는 이미 COUNSELOR 소유권 검증을 수행하므로 PII 접근이 가장 좁은 범위로 제한된다.
-`Customer.phone`은 기존 필드이며 스키마 변경 없음 — 브리핑 투영만 추가.
+`GET /counselor/bookings/:bookingId/brief` 응답에 `phone: string` 필드를 추가한다. `brief` API는 이미 COUNSELOR 소유권 검증을 수행하므로 PII 접근이 가장 좁은 범위로 제한된다. `Customer.phone`은 기존 필드이며 스키마 변경 없음 — 브리핑 투영만 추가한다.
 
 ### 집계 지표 (Analytics 확장)
 

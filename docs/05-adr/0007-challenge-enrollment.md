@@ -4,6 +4,8 @@
 - **날짜**: 2026-06-10
 - **결정자**: 설계자 (솔로 과제)
 
+**결정 (한 줄):** BioCom 3-step 완성을 위해 A1+B1+C1 조합(자유 문자열 serviceType + createRecord 트랜잭션 내 원자 등록 + JSONB 배열 additive superset)을 채택한다. 기존 92개 테스트는 무회귀로 유지한다.
+
 ---
 
 ## Context (결정 배경)
@@ -12,9 +14,15 @@
 
 1. **step-3 추적 공백(R9)**: 상담사가 구매 전환 고객을 관리 프로그램(챌린지)에 등록하는 행위가 구두/수기로만 처리되어, "구매가 실제 관리 프로그램 등록으로 이어졌는가"를 측정할 수 없다.
 
-2. **검사 도메인 미정합**: 기존 시드는 BioCom의 실제 7종 검사 서비스(대사 6종·음식물 과민·스트레스/노화·영양/중금속·장내 미생물·호르몬·펫 영양)와 무관한 일반 데이터(`BLOOD_PANEL`/`GROWTH_PANEL`)였고, 검사 지표에 **참조범위·정상/주의/위험 상태**가 없어 고객이 결과를 해석할 수 없었다.
+2. **검사 도메인 미정합**: 기존 시드는 BioCom의 실제 7종 검사 서비스(대사 6종·음식물 과민·스트레스/노화·영양/중금속·장내 미생물·호르몬·펫 영양)와 무관한 일반 데이터(`BLOOD_PANEL`/`GROWTH_PANEL`)였다. 검사 지표에 **참조범위·정상/주의/위험 상태**가 없어 고객이 결과를 해석할 수 없었다.
 
-이 공백을 BioCom 도메인에 맞춰 닫되, **기존 92개 테스트를 단 하나도 깨지 않는** 비파괴적(additive) 방식이라는 강한 제약 아래 설계해야 한다. 결정 동인은 (1) **92개 테스트 green 유지**(enum 식별자가 Analytics 집계 키이자 테스트 픽스처), (2) **JSONB metrics의 이중 형태 현실**(seed는 배열 `[{metricKey,value,unit}]`, `seedIsolated`는 평면 객체 `{key:val}`), (3) **등록 캡처의 최소 blast radius**(검증된 `createRecord` 트랜잭션·`bookingId @unique` 1-기록 불변식을 깨지 않을 것)이다.
+이 공백을 BioCom 도메인에 맞춰 닫되, **기존 92개 테스트를 단 하나도 깨지 않는** 비파괴적(additive) 방식이라는 강한 제약 아래 설계해야 한다.
+
+결정 동인:
+
+- (1) **92개 테스트 green 유지** — enum 식별자가 Analytics 집계 키이자 테스트 픽스처
+- (2) **JSONB metrics의 이중 형태 현실** — seed는 배열 `[{metricKey,value,unit}]`, `seedIsolated`는 평면 객체 `{key:val}`
+- (3) **등록 캡처의 최소 blast radius** — 검증된 `createRecord` 트랜잭션·`bookingId @unique` 1-기록 불변식을 깨지 않을 것
 
 이를 위해 (a) serviceType/검사 타입 모델링, (b) 챌린지 등록 캡처 위치, (c) 검사 지표 확장 형태 세 축에서 각각 3개 옵션이 검토되었다.
 
@@ -24,13 +32,13 @@
 
 **A1 + B1 + C1을 채택한다 — 비파괴적·원자적·픽스처 보존 조합.**
 
-- **(A1) serviceType는 자유 문자열 + 공유 `SERVICE_TYPES` 상수**: `TestResult.serviceType`는 `String`을 유지한다. 시드 값은 BioCom 7종 코드(`METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)로 교체하되, seed와 미래 필터가 **단일 `SERVICE_TYPES` 상수**에서 코드를 가져와 자유 문자열 표류를 차단한다. 프론트엔드는 별도 `SERVICE_TYPE_LABELS`로 한글 표시명을 매핑한다.
+- **(A1) serviceType는 자유 문자열 + 공유 `SERVICE_TYPES` 상수**: `TestResult.serviceType`는 `String`을 유지한다. 시드 값은 BioCom 7종 코드(`METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)로 교체한다. seed와 미래 필터는 **단일 `SERVICE_TYPES` 상수**에서 코드를 가져와 자유 문자열 표류를 차단한다. 프론트엔드는 별도 `SERVICE_TYPE_LABELS`로 한글 표시명을 매핑한다.
 
-- **(B1) 챌린지 등록은 `createRecord` 트랜잭션 내 원자 생성**: `CreateConsultationRecordDto`에 **단일 선택적** `challengeId?: string`을 추가한다(배열 아님). 챌린지 존재 가드(`findUnique`)는 `$transaction` **진입 전**에 두어 미존재 시 깨끗한 404를 반환하고(트랜잭션 중간 P2003 회피, 기존 pre-txn 검증 패턴과 정합), 트랜잭션 안에서는 `if (dto.challengeId)`로 감싼 `challengeEnrollment.create` **하나만** 실행한다. `updateRecord`는 등록을 **건드리지 않는다**(products/metrics를 전량 교체하는 delete-all+recreate 특성상 등록에 적용하면 `enrolledAt`·상태가 유실). 코드는 outcome에 **게이팅하지 않으며**(어떤 outcome도 등록 가능), 구매(PURCHASED)와의 연관은 UI 컨벤션·Analytics 해석에서만 표현된다.
+- **(B1) 챌린지 등록은 `createRecord` 트랜잭션 내 원자 생성**: `CreateConsultationRecordDto`에 **단일 선택적** `challengeId?: string`을 추가한다(배열 아님). 챌린지 존재 가드(`findUnique`)는 `$transaction` **진입 전**에 두어 미존재 시 깨끗한 404를 반환한다(트랜잭션 중간 P2003 회피, 기존 pre-txn 검증 패턴과 정합). 트랜잭션 안에서는 `if (dto.challengeId)`로 감싼 `challengeEnrollment.create` **하나만** 실행한다. `updateRecord`는 등록을 **건드리지 않는다** — products/metrics를 전량 교체하는 delete-all+recreate 특성상 등록에 적용하면 `enrolledAt`·상태가 유실된다. 코드는 outcome에 **게이팅하지 않으며**(어떤 outcome도 등록 가능), 구매(PURCHASED)와의 연관은 UI 컨벤션·Analytics 해석에서만 표현된다.
 
-- **(C1) 검사 지표는 배열 요소를 additive superset으로 확장**: `metrics` JSONB 배열 요소를 `{metricKey, label?, value, unit?, referenceRange?, status?}`로 확장한다(`status ∈ {정상, 주의, 위험}`). 새 키는 기존 객체에 대한 선택적 추가이므로 기존 소비자(`normalizeMetrics`, `toMetricList`)는 `{metricKey,value,unit}`만 읽고 무시한다 — 배열·평면 객체 두 형태 모두 하위호환. 프론트엔드 타입 경계(`TestMetric`)를 함께 넓혀 새 필드가 렌더 경로까지 살아남게 한다. `status`/`referenceRange`는 시드에 사전 계산한다(렌더 시점 파싱 회피).
+- **(C1) 검사 지표는 배열 요소를 additive superset으로 확장**: `metrics` JSONB 배열 요소를 `{metricKey, label?, value, unit?, referenceRange?, status?}`로 확장한다(`status ∈ {정상, 주의, 위험}`). 새 키는 기존 객체에 대한 선택적 추가이므로 기존 소비자(`normalizeMetrics`, `toMetricList`)는 `{metricKey,value,unit}`만 읽고 새 필드를 무시한다 — 배열·평면 객체 두 형태 모두 하위호환. 프론트엔드 타입 경계(`TestMetric`)를 함께 넓혀 새 필드가 렌더 경로까지 살아남게 한다. `status`/`referenceRange`는 시드에 사전 계산한다(렌더 시점 파싱 회피).
 
-- **(공통) 마이그레이션은 순수 additive**: `add_challenge` 마이그레이션은 `CREATE TYPE`(`ChallengeEnrollmentStatus`) / `CREATE TABLE`(Challenge, ChallengeEnrollment) / `CREATE UNIQUE INDEX`(`@@unique([recordId])`) / `CREATE INDEX`만 생성하고 기존 테이블에 `ALTER`를 가하지 않는다. `ChallengeEnrollment`의 4개 FK(`challengeId/customerId/recordId/counselorId`)는 **모두 `onDelete: Cascade`**로 선언해(`ConsultationRecordMetric` 미러링) `cleanupSeeded`가 **변경 없이** 등록 행을 정리하게 한다.
+- **(공통) 마이그레이션은 순수 additive**: `add_challenge` 마이그레이션은 `CREATE TYPE`(`ChallengeEnrollmentStatus`) / `CREATE TABLE`(Challenge, ChallengeEnrollment) / `CREATE UNIQUE INDEX`(`@@unique([recordId])`) / `CREATE INDEX`만 생성하고, 기존 테이블에 `ALTER`를 가하지 않는다. `ChallengeEnrollment`의 4개 FK(`challengeId/customerId/recordId/counselorId`)는 **모두 `onDelete: Cascade`**로 선언해(`ConsultationRecordMetric` 미러링) `cleanupSeeded`가 **변경 없이** 등록 행을 정리하게 한다.
 
 - **(공통) enum 식별자 동결, 라벨만 리브랜딩**: `ConsultationActionType`·`Outcome`·신규 `ChallengeEnrollmentStatus` 식별자는 Analytics 집계 키이자 테스트 픽스처이므로 동결한다. BioCom 어휘 리브랜딩은 **표시 라벨 맵에서만** 수행한다.
 
