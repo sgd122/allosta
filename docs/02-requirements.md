@@ -254,7 +254,7 @@
 | NFR3-2 | 역할 층(RolesGuard)과 소유권 층(서비스 레이어 가드)은 분리 구현된다. 이 분리가 설계 판단의 핵심 신호다.                                                                                                                                                                               |
 | NFR3-3 | 비밀번호는 bcrypt로 해싱한다. JWT secret은 환경 변수로 주입된다.                                                                                                                                                                                                                      |
 | NFR3-4 | 역할·소유권 거부 케이스는 각각 별도 통합 테스트(`rbac.spec.ts`)로 검증된다.                                                                                                                                                                                                           |
-| NFR3-5 | Next.js Middleware가 역할별 라우트 보호를 수행한다.<br>• CUSTOMER: `/book`, `/bookings`, `/results`<br>• COUNSELOR: `/schedule`, `/performance`<br>• ADMIN: `/dashboard`<br>• API 프록시(`/api/proxy/**`)가 JWT를 httpOnly 쿠키에서 추출해 NestJS로 전달하므로 클라이언트 JS는 토큰을 노출하지 않는다. |
+| NFR3-5 | Next.js Middleware가 역할별 라우트 보호를 수행한다.<br>• CUSTOMER: `/book`, `/bookings`, `/results`<br>• COUNSELOR: `/schedule`, `/performance`<br>• ADMIN: `/dashboard`<br><br>또한 API 프록시(`/api/proxy/**`)가 JWT를 httpOnly 쿠키에서 추출해 NestJS로 전달하므로 클라이언트 JS는 토큰을 노출하지 않는다. |
 
 ### NFR4 — 2주 솔로 일정 제약 (Solo 2-Week Budget)
 
