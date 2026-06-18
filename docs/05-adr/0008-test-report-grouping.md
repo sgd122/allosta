@@ -4,6 +4,8 @@
 - **날짜**: 2026-06-10
 - **관련**: [0003 polymorphic-subject](./0003-polymorphic-subject.md), [0007 challenge-enrollment](./0007-challenge-enrollment.md), [FR8](../02-requirements.md), [03-mvp-scope §1 #4](../03-mvp-scope.md)
 
+**결정 (한 줄):** 스키마·API·DTO 변경 없이, 프론트엔드 순수 함수로 `TestResult`를 (subjectId + 검사일) 기준 방문 단위 "검사 결과서"로 표시 레벨에서만 그룹핑한다.
+
 ## 맥락
 
 `TestResult`는 serviceType(대사 6종·음식물 과민·장내 미생물 …) **1종당 1 row**로 저장된다(ADR 0007: seed-only/read-only, 스키마 동결; subject 파생은 ADR 0003). 그러나 고객은 한 번의 방문에서 받은 여러 검사를 **하나의 검사 결과서**로 인식한다. 초기 UI는 이를 그대로 노출해 두 가지 혼선을 만들었다:

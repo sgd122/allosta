@@ -4,11 +4,13 @@
 - **날짜**: 2026-06-11
 - **관련**: [0006 ops-hardening](./0006-ops-hardening.md)(NO_SHOW 단말 상태 도입), [0009 frontend-fsd-architecture](./0009-frontend-fsd-architecture.md)(슬라이스/세그먼트 컨벤션), [0012 frontend-types-constants-segments](./0012-frontend-types-constants-segments.md), [04-system-design §API](../04-system-design.md), [02-requirements AC-N6·AC-UX1](../02-requirements.md)
 
+**결정 (한 줄):** 서버는 NO_SHOW를 포함한 전체 데이터를 반환하고, 기간·상태 필터와 날짜별 그룹핑은 클라이언트 순수 함수로 처리한다.
+
 ## 맥락
 
 상담사 콘솔(`/schedule`, `/availability`)에 3가지 운용 페인이 보고되었다.
 
-1. **NO_SHOW 비가시성**: `GET /counselor/schedule`이 `status IN (PENDING, CONFIRMED, COMPLETED)`만 반환하고 **`NO_SHOW`를 제외**했다. ops-hardening(ADR 0006)으로 `sweepNoShows`가 미방문 예약을 `NO_SHOW`로 전이하지만, 정작 상담사가 그 미방문 내역을 콘솔에서 볼 수 없었다. 출석 정정(`PATCH /attendance`)의 대상조차 일정에서 사라지는 모순.
+1. **NO_SHOW 비가시성**: `GET /counselor/schedule`이 `status IN (PENDING, CONFIRMED, COMPLETED)`만 반환하고 **`NO_SHOW`를 제외**했다. ops-hardening(ADR 0006)으로 `sweepNoShows`가 미방문 예약을 `NO_SHOW`로 전이하지만, 정작 상담사가 그 미방문 내역을 콘솔에서 볼 수 없었다. 출석 정정(`PATCH /attendance`)의 대상조차 일정에서 사라지는 모순이었다.
 2. **단일 평면 리스트**: `/schedule`은 제목이 "오늘의 상담 일정"이지만 실제로는 전체 예약을 startAt 오름차순 평면 리스트로 덤프했다. 오늘/특정 날짜만 보거나 상태별로 좁힐 수단이 없었다.
 3. **가용 일정 평면 덤프**: `/availability`도 슬롯을 평면 리스트로 나열해, 날짜가 늘면 관리·조망이 어려웠다.
 

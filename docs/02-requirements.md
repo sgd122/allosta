@@ -1,8 +1,14 @@
 # 02. 요구사항 목록 (Requirements)
 
-> 이 문서는 플랫폼의 기능 요구사항(FR)·비기능 요구사항(NFR)과
-> 검증 가능한 수용 기준(AC1–AC11 + ops-hardening AC-N/A/S + BioCom AC-C/M 시리즈)을 정의한다.
-> 도메인은 BioCom(검사 → 상담 → 관리 프로그램 챌린지의 3-step). 설계 근거는 ADR 0007 참조.
+## TL;DR (한눈에)
+
+- 이 문서는 세 가지를 정의한다: **기능 요구사항(FR1–FR15)**, **비기능 요구사항(NFR1–NFR4)**, 그리고 **검증 가능한 수용 기준(AC)**.
+- 수용 기준은 §3에 모여 있다: 코어 골든패스(AC1–AC11), 운영 강화(AC-N/A/S), BioCom 챌린지(AC-C), 생산성(AC-P), 검사 지표(AC-M), 통화 증거(AC-L), 그리고 고객용 AI Q&A(§3 하단 ADR 0018).
+- 기능 요구사항은 **MoSCoW 우선순위**로 분류한다: Must(골든패스 코어) · Should(운영 완성도) · Could(차별화) · Won't(이번 범위 밖). 2주 솔로 예산(NFR4) 안에서 무엇을 먼저 증명할지에 대한 판단이다.
+- 도메인은 BioCom의 3-step: **검사 → 상담 → 관리 프로그램 챌린지**.
+- 각 AC는 "검증 가능 기준 + 검증 방법(테스트 파일)" 형태로 기술되며, "통합 테스트"는 NestJS + supertest 백엔드 테스트를 뜻한다.
+
+> 설계 근거는 ADR 0007 참조.
 
 ---
 
@@ -25,6 +31,8 @@
 
 ### FR1 — 예약 및 동시성 (Booking & Concurrency)
 
+> 고객이 가용 슬롯을 보고 검사결과와 함께 예약하며, 동시 요청에도 한 슬롯에 한 건만 들어가도록 보장한다.
+
 | ID    | 요구사항                                                                                                                                                                                                                                                                              |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR1-1 | 고객은 로그인 후 가용 슬롯(`AvailabilitySlot`) 통합 캘린더(`GET /counselors/availability-calendar`)를 조회할 수 있다. 동일 시간대에 여러 상담사가 가용한 경우 하나의 엔트리로 집계되며 `availableCount`로 표현된다.                                                                   |
@@ -34,9 +42,11 @@
 | FR1-5 | 고객은 본인의 PENDING 또는 CONFIRMED 예약을 취소할 수 있다(`status=CANCELLED`). 취소된 슬롯은 즉시 가용 목록에 재노출된다.                                                                                                                                                            |
 | FR1-6 | 가용 슬롯 조회는 파생값 기준으로 동작한다: `AvailabilitySlot.isOpen = true` AND 해당 슬롯에 `status IN (PENDING, CONFIRMED)`인 `Booking`이 없는 슬롯만 가용으로 반환한다.                                                                                                             |
 | FR1-7 | 통합 캘린더(`GET /counselors/availability-calendar`)는 동일 시작/종료 시간을 가진 여러 상담사의 슬롯을 하나의 엔트리로 집계하고, `availableCount`(가용 상담사 수)를 제공한다. 업무 시간(09:00–18:00)만 포함하며, 시드는 2026년 6월–8월, 월–금, 09:00–18:00 매 시간 그리드를 생성한다. |
-| FR1-8 | **한 고객은 동일·중복 시간대에 복수의 활성(`PENDING`/`CONFIRMED`) 예약을 가질 수 없다.** 서로 다른 슬롯(예: 서로 다른 상담사)이라도 시간 범위가 겹치면 예약 생성은 `409 CONFLICT`를 반환한다. 슬롯 길이가 가변(30/60분)이므로 시작 시각 동일이 아닌 **시간 범위 겹침**으로 판정한다. DB GiST `EXCLUDE` 제약(`booking_customer_no_overlap`, `WHERE status IN ('PENDING','CONFIRMED')`)이 동시성 하에서도 이를 보장하며, 앱 레벨 사전 검사가 UX를 보완한다(ADR 0015). |
+| FR1-8 | **한 고객은 동일·중복 시간대에 복수의 활성(`PENDING`/`CONFIRMED`) 예약을 가질 수 없다.**<br>• 서로 다른 슬롯(예: 서로 다른 상담사)이라도 시간 범위가 겹치면 예약 생성은 `409 CONFLICT`를 반환한다.<br>• 슬롯 길이가 가변(30/60분)이므로 시작 시각 동일이 아닌 **시간 범위 겹침**으로 판정한다.<br>• DB GiST `EXCLUDE` 제약(`booking_customer_no_overlap`, `WHERE status IN ('PENDING','CONFIRMED')`)이 동시성 하에서도 이를 보장한다.<br>• 앱 레벨 사전 검사가 UX를 보완한다(ADR 0015). |
 
 ### FR2 — 상담 대상 파생 (Subject Derivation — CUSTOMER-only)
+
+> 상담 대상은 요청자가 입력하지 않고, 지정한 검사결과의 소유자에서 서버가 자동으로 파생한다.
 
 | ID    | 요구사항                                                                                                                                                                                                                                                                   |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -48,15 +58,19 @@
 
 ### FR3 — 구조화 상담 기록 (Structured Consultation Record)
 
+> 상담사는 자유 텍스트 대신 고정 슬롯과 체크리스트로 상담 내용을 기록해, 상담사 간 기록 일관성을 확보한다.
+
 | ID     | 요구사항                                                                                                                                                                                                                                                                                                                                                                    |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR3-1  | 상담사는 본인이 담당한 예약에 한해 상담 기록(`ConsultationRecord`)을 생성할 수 있다. 다른 상담사의 예약에 기록을 작성하려 하면 `403 FORBIDDEN`을 반환한다(소유권 검증).                                                                                                                                                                                                     |
-| FR3-2  | 상담 기록에는 `summary`(주요 상담 내용 — 필수), `recommendation`(권고 사항 — 필수), `followUp`(후속 조치 — 선택), `interestedProducts[]`(관심 상품 다중 선택), `outcome ∈ {EXPLAINED, GUIDED, PURCHASED}`, `actions[] ∈ ConsultationActionType{METRIC_EXPLAINED, DIET_GUIDANCE, SUPPLEMENT_GUIDANCE, RETEST_GUIDANCE, LIFESTYLE_GUIDANCE}`(상담행위 체크리스트)를 포함한다. |
+| FR3-2  | 상담 기록은 다음 필드를 포함한다.<br>• `summary` — 주요 상담 내용(필수)<br>• `recommendation` — 권고 사항(필수)<br>• `followUp` — 후속 조치(선택)<br>• `interestedProducts[]` — 관심 상품 다중 선택<br>• `outcome ∈ {EXPLAINED, GUIDED, PURCHASED}`<br>• `actions[] ∈ ConsultationActionType{METRIC_EXPLAINED, DIET_GUIDANCE, SUPPLEMENT_GUIDANCE, RETEST_GUIDANCE, LIFESTYLE_GUIDANCE}` — 상담행위 체크리스트 |
 | FR3-2b | `summary`·`recommendation`는 필수 입력으로 빈값을 거부한다(서버 `@IsNotEmpty` + 프론트 폼 저장 차단). 자유 텍스트 단일 `notes` 대신 고정 슬롯(summary/recommendation/followUp)과 `actions[]` 체크리스트로 기록 형태를 강제해 상담사 간 기록 일관성을 보장한다 — `outcome` enum이 결과를 일관되게 만드는 것과 동일한 메커니즘이다.                                           |
 | FR3-3  | 하나의 예약(`Booking`)에는 상담 기록이 최대 1건만 연결된다(`ConsultationRecord.bookingId unique`).                                                                                                                                                                                                                                                                          |
 | FR3-4  | 상담사는 기록 생성 시 `metricRefs[]`로 해당 상담에서 논의한 검사 지표를 선택해 연결할 수 있다(`ConsultationRecordMetric: recordId, testResultId, metricKey`).                                                                                                                                                                                                               |
 
 ### FR4 — Analytics 및 지표별 전환 집계
+
+> 관리자·상담사가 상담 전환율과 지표별 전환 기여도를 쿼리 시점 실시간으로 집계해 본다.
 
 | ID    | 요구사항                                                                                                                                                                                                                                                                                                                                                              |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,9 +78,11 @@
 | FR4-2 | 상담사는 `GET /admin/analytics?scope=own`(기본)으로 본인 담당 예약만 집계, `scope=all`로 전체 집계를 볼 수 있다. 관리자는 `?counselorId=<id>` 파라미터로 특정 상담사 집계를 조회할 수 있다.                                                                                                                                                                           |
 | FR4-3 | Analytics는 `ConsultationRecordMetric`을 조인해 "특정 검사 지표를 논의한 상담"의 전환율을 지표별로 집계한다. 이를 통해 어떤 검사 결과가 전환에 기여했는지 파악할 수 있다.                                                                                                                                                                                             |
 | FR4-4 | 집계는 사전 계산 없이 쿼리 시점 실시간 집계로 동작한다(평가 기간 데이터 규모 기준).                                                                                                                                                                                                                                                                                   |
-| FR4-5 | `GET /admin/analytics`는 관리 프로그램(챌린지) 운영 지표로 `challengeEnrollments`(등록 수)와 `challengeConversionRate`(구매 → 챌린지 등록 전환율)를 추가로 반환한다(FR13 참조). 두 지표 모두 기존 `scope=own\|all` + `counselorId` 필터를 준수하며, 범위 산정은 **`ChallengeEnrollment`가 연결된 `ConsultationRecord`의 `counselorId`**(record JOIN)를 기준으로 한다. |
+| FR4-5 | `GET /admin/analytics`는 관리 프로그램(챌린지) 운영 지표를 추가로 반환한다(FR13 참조).<br>• `challengeEnrollments` — 등록 수<br>• `challengeConversionRate` — 구매 → 챌린지 등록 전환율<br>• 두 지표 모두 기존 `scope=own\|all` + `counselorId` 필터를 준수한다.<br>• 범위 산정은 **`ChallengeEnrollment`가 연결된 `ConsultationRecord`의 `counselorId`**(record JOIN)를 기준으로 한다. |
 
 ### FR5 — 알림 (Notification — 시뮬레이션)
+
+> 예약 확인·리마인더 알림을 생성·추적하되, 실제 외부 발송은 어댑터 인터페이스 경계로만 표현한다.
 
 | ID    | 요구사항                                                                                                                                                                                                                                                |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -76,6 +92,8 @@
 | FR5-4 | Notification 엔티티는 `scheduledAt`, `sentAt`을 포함해 발송 상태를 추적한다. `Notification.type` enum의 `SLOT_OPENED` 값은 DB에 예약(reserved)되어 있으나 현재 미사용이다 — 고객 대기열(Phase 2 Non-Goal)이 도입될 때 활성화할 확장 지점이다.                                                                                                                                                                            |
 
 ### FR6 — 만석 시 1차 대안: 가용 캘린더 (고객 대기열은 Phase 2 Non-Goal)
+
+> 원하는 슬롯이 만석일 때의 1차 대안은 통합 가용 캘린더에서 다른 슬롯을 직접 찾아 예약하는 것이며, 고객 대기열은 의식적으로 Phase 2로 미룬다.
 
 | ID    | 요구사항                                                                                                                                                                                                                                                      |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -105,16 +123,20 @@
 
 ### FR8 — 검사결과 조회 (Test Result — seed + read-only)
 
+> 검사결과는 seed 데이터로 제공되며 조회 전용 API만 노출하고, 본인·가족 결과를 결과서 단위로 묶어 보여준다.
+
 | ID    | 요구사항                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR8-1 | 검사결과(`TestResult`)는 seed 데이터(JSON)로 제공되며, 조회 전용 API만 노출한다.                                                                                                                                                                                                                                                                                                                                                                                                       |
 | FR8-2 | `GET /test-results`는 로그인 고객 본인 및 연결된 가족 구성원의 TestResult를 모두 반환한다(FamilyLink ACCEPTED 조건).                                                                                                                                                                                                                                                                                                                                                                   |
-| FR8-3 | `TestResult`의 `metrics` 필드는 JSONB 배열로 저장되며, `metricKey`로 개별 지표를 참조할 수 있다. 각 지표 요소는 `{ metricKey, label?, value, unit?, referenceRange?, status? }` 형태이며, `referenceRange`/`status`는 기존 `{metricKey,value,unit}` 형태의 **하위호환 superset**으로 추가된다(누락 가능, 기존 소비자 무영향). `status ∈ {정상, 주의, 위험}`.                                                                                                                           |
+| FR8-3 | `TestResult`의 `metrics` 필드는 JSONB 배열로 저장되며, `metricKey`로 개별 지표를 참조할 수 있다.<br>• 각 지표 요소는 `{ metricKey, label?, value, unit?, referenceRange?, status? }` 형태다.<br>• `referenceRange`/`status`는 기존 `{metricKey,value,unit}` 형태의 **하위호환 superset**으로 추가된다(누락 가능, 기존 소비자 무영향).<br>• `status ∈ {정상, 주의, 위험}`. |
 | FR8-4 | 검사결과 업로드·파싱 파이프라인은 `UploadPipeline` 인터페이스 경계로만 표현한다(구현 없음).                                                                                                                                                                                                                                                                                                                                                                                            |
-| FR8-5 | BioCom의 7종 검사 서비스(`serviceType`: `METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)가 시드된다. `serviceType`은 자유 문자열(ADR 0007: seed-only/read-only)이되, seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수에서 코드를 가져와 표류를 방지한다. 프론트엔드는 별도 라벨 맵(`SERVICE_TYPE_LABELS`)으로 한글 표시명을 매핑한다(예약·내 예약·검사결과 모든 표면에서 raw 코드 대신 친화 라벨을 노출). |
-| FR8-6 | 검사결과는 표시 레벨에서 **(subjectId + 검사일) 단위 "검사 결과서"**로 그룹핑된다(`lib/reports.ts`, 순수 함수). 검사결과 화면은 **`내 검사`/`연동 계정` 서브탭**으로 본인·가족 결과를 분리하고, 예약하기는 결과서 단위로 선택한다. 스키마/API 무변경 — `Booking.testResultId`는 subject 앵커이므로 대표 결과 id 전송으로 충분하다(ADR 0008).                                                                                                                                           |
+| FR8-5 | BioCom의 7종 검사 서비스(`serviceType`: `METABOLIC_6`, `FOOD_INTOLERANCE`, `STRESS_AGING`, `NUTRIENT_HEAVY_METAL`, `GUT_MICROBIOME`, `HORMONE`, `PET_NUTRITION`)가 시드된다.<br>• `serviceType`은 자유 문자열이다(ADR 0007: seed-only/read-only).<br>• seed와 미래 필터가 공유하는 단일 `SERVICE_TYPES` 상수에서 코드를 가져와 표류를 방지한다.<br>• 프론트엔드는 별도 라벨 맵(`SERVICE_TYPE_LABELS`)으로 한글 표시명을 매핑한다 — 예약·내 예약·검사결과 모든 표면에서 raw 코드 대신 친화 라벨을 노출한다. |
+| FR8-6 | 검사결과는 표시 레벨에서 **(subjectId + 검사일) 단위 "검사 결과서"**로 그룹핑된다(`lib/reports.ts`, 순수 함수).<br>• 검사결과 화면은 **`내 검사`/`연동 계정` 서브탭**으로 본인·가족 결과를 분리한다.<br>• 예약하기는 결과서 단위로 선택한다.<br>• 스키마/API 무변경 — `Booking.testResultId`는 subject 앵커이므로 대표 결과 id 전송으로 충분하다(ADR 0008). |
 
 ### FR9 — 가족 연결 (Family Linking)
+
+> 보호자 고객이 초대 코드로 가족 구성원을 본인 계정과 대칭형으로 연결하고, 보호자가 언제든 철회할 수 있다.
 
 | ID    | 요구사항                                                                                                                                              |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -125,6 +147,8 @@
 
 ### FR10 — No-show 자동 처리 (Ops Hardening — ADR 0006)
 
+> 노쇼 예약은 스케줄러가 자동으로 NO_SHOW로 전이하고, 상담사·관리자가 출결을 수동으로 정정할 수 있다.
+
 | ID     | 요구사항                                                                                                                                                                                                                            |
 | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR10-1 | 슬롯 종료 시각(`endAt`)이 지난 `CONFIRMED` 예약은 스케줄러(`sweepNoShows`)에 의해 자동으로 `NO_SHOW`로 전이된다. 상태 가드 `updateMany`(`status = CONFIRMED WHERE slot.endAt < now`)만 적용하여 `COMPLETED` 예약을 덮어쓰지 않는다. |
@@ -133,6 +157,8 @@
 | FR10-4 | `NO_SHOW`는 단말 상태다. 이후 다른 상태로 전이할 수 없다. 스케줄러도 이미 `NO_SHOW`인 예약을 재전이하지 않는다(멱등).                                                                                                               |
 
 ### FR11 — 운영 깔때기 Analytics 확장 (Ops Hardening — ADR 0006)
+
+> Analytics에 예약 상태별 카운트와 노쇼율·슬롯 가동률 같은 운영 지표를 추가한다.
 
 | ID     | 요구사항                                                                                                                                                                                                             |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -143,6 +169,8 @@
 
 ### FR12 — Availability Slot CRUD (Ops Hardening — ADR 0006)
 
+> 상담사가 본인 가용 슬롯을 직접 생성·수정·삭제(배치 포함)하고, 관리자는 임의 상담사의 슬롯을 관리한다.
+
 | ID     | 요구사항                                                                                                                                                                                                                                    |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR12-1 | 상담사는 `POST /counselors/slots`로 본인의 슬롯을 배치 생성할 수 있다. 배열은 단일 트랜잭션으로 처리된다(all-or-nothing).                                                                                                                   |
@@ -152,17 +180,21 @@
 
 ### FR14 — 상담 준비·생산성 자동화 (ADR 0014)
 
+> 상담사가 상담 전에 검사 지표·과거 기록·사전질문을 모은 결정론 브리핑을 보고, AI 요약은 critical path 밖에서 보강된다.
+
 | ID     | 요구사항                                                                                                                                                                                                                                                                                                      |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR14-1 | 상담사는 `GET /counselor/bookings/:bookingId/brief`로 결정론 브리핑을 조회할 수 있다. 브리핑은 TestResult 지표(`metricKey` asc, 이상 플래그 포함) + 과거 ConsultationRecord(`createdAt` desc) + ACCEPTED FamilyLink 맥락 + 고객 선택 `concern`을 서버가 읽기 전용으로 조립한다. 타 상담사 예약 조회 시 `403`. |
 | FR14-2 | 브리핑을 최초 조회하면 `Booking.briefOpenedAt`이 해당 시각으로 1회만 기록된다(조건부 `updateMany({ where: { briefOpenedAt: null } })` — DB 레이어 멱등, 2회 이상 호출해도 시각 불변).                                                                                                                         |
 | FR14-3 | 고객은 예약 생성 시 선택적으로 `concern`(사전질문, `@MaxLength(1000)`)을 함께 전달할 수 있다. `concern`은 브리핑 조립에만 사용되며 고객 API로 반환되지 않는다(write-only).                                                                                                                                    |
-| FR14-4 | 다가오는 상담을 어떻게 진행할지에 대한 **상담 전 가이던스**는 대상자의 검사 지표 + 과거 상담 기록(+ `concern`)에서 파생되어 상담사 사전 브리핑에 노출된다. 브리핑을 열면(`getBookingBrief` → `GuidanceService.ensureFallbackForBooking`) 결정론 템플릿 FALLBACK 가이던스가 `ConsultationBriefGuidance(bookingId-keyed, status=FALLBACK)`로 보장된다. LLM은 critical path에 있지 않으며, `createRecord`는 가이던스를 건드리지 않는다. |
-| FR14-5 | OpsScheduler `@Interval` 스윕(`sweepPendingUpgrades`)이 `status=FALLBACK` 행만 대상으로 Ollama(`OLLAMA_BASE_URL`, 기본 `http://localhost:11434`) `SUMMARY_MODEL`(기본 `gemma4:e4b`)로 생성 후 `UPGRADED`로만 업서트한다. 이미 `UPGRADED`면 skip — 절대 downgrade 하지 않는다. 멱등. 수동 트리거 엔드포인트는 두지 않는다(서버 자동 수행).                     |
+| FR14-4 | 다가오는 상담을 어떻게 진행할지에 대한 **상담 전 가이던스**는 대상자의 검사 지표 + 과거 상담 기록(+ `concern`)에서 파생되어 상담사 사전 브리핑에 노출된다.<br>• 브리핑을 열면(`getBookingBrief` → `GuidanceService.ensureFallbackForBooking`) 결정론 템플릿 FALLBACK 가이던스가 `ConsultationBriefGuidance(bookingId-keyed, status=FALLBACK)`로 보장된다.<br>• LLM은 critical path에 있지 않으며, `createRecord`는 가이던스를 건드리지 않는다. |
+| FR14-5 | OpsScheduler `@Interval` 스윕(`sweepPendingUpgrades`)이 `status=FALLBACK` 행만 대상으로 처리한다.<br>• Ollama(`OLLAMA_BASE_URL`, 기본 `http://localhost:11434`) `SUMMARY_MODEL`(기본 `gemma4:e4b`)로 생성 후 `UPGRADED`로만 업서트한다.<br>• 이미 `UPGRADED`면 skip — 절대 downgrade 하지 않는다(멱등).<br>• 수동 트리거 엔드포인트는 두지 않는다(서버 자동 수행). |
 | FR14-6 | Ollama 미설치·연결 실패·env 미설정 시 스윕은 해당 사이클을 건너뛰고 FALLBACK 행을 유지한다(fail-soft). 환경 변수 미설정 시 기본값 사용, startup assertion 없음.                                                                                                                                               |
 | FR14-7 | `GET /admin/analytics`는 `briefOpenRate`(분자=`briefOpenedAt != null`, 분모=`status IN (CONFIRMED,COMPLETED,NO_SHOW)`)를 headline 생산성 지표로 반환한다. 기존 `scope=own\|all`+`counselorId` 필터를 준수한다. |
 
 ### FR13 — 관리 프로그램(챌린지) 카탈로그 및 등록 (BioCom step-3 — ADR 0007)
+
+> 상담사가 상담 기록 생성과 같은 트랜잭션에서 고객을 관리 프로그램(챌린지)에 선택적으로 등록한다(BioCom step-3).
 
 | ID     | 요구사항                                                                                                                                                                                                                                                                                                                                                     |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -170,18 +202,20 @@
 | FR13-2 | 상담사는 상담 기록 생성 시(`POST /consultation-records`) 선택적 단일 `challengeId`를 함께 전달해 고객을 관리 프로그램에 등록(`ChallengeEnrollment`)할 수 있다. 등록은 **상담 기록 생성 트랜잭션 안에서 원자적으로** 발생한다(`createRecord` 전용; `updateRecord`는 등록을 생성·변경하지 않는다).                                                             |
 | FR13-3 | 등록은 outcome에 **코드로 게이팅되지 않는다** — 서버는 어떤 outcome에서도 `challengeId`를 수락한다. 구매(`PURCHASED`)와의 연관은 UI 컨벤션(PURCHASED 경로에서 Select 노출)과 Analytics 해석(전환율 분모=PURCHASED 기록)에서만 표현된다.                                                                                                                      |
 | FR13-4 | `challengeId`가 존재하지 않는 챌린지를 가리키면 트랜잭션 진입 **전** `findUnique` 가드가 `404 NOT_FOUND`를 반환한다(트랜잭션 중간 실패 대신 깨끗한 404). `challengeId`가 없으면 등록 분기는 실행되지 않아 기존 기록 생성 동작에 영향이 없다.                                                                                                                 |
-| FR13-5 | `ChallengeEnrollment`(`id, challengeId, customerId, recordId, counselorId, status, enrolledAt`)는 `challengeId/customerId/recordId/counselorId` 4개 FK를 모두 `onDelete: Cascade`로 선언하고, `@@unique([recordId])`로 한 상담 기록당 최대 1건의 등록을 보장한다. `status ∈ ChallengeEnrollmentStatus{IN_PROGRESS, COMPLETED, DROPPED}`(기본 `IN_PROGRESS`). |
+| FR13-5 | `ChallengeEnrollment`(`id, challengeId, customerId, recordId, counselorId, status, enrolledAt`)의 스키마 제약은 다음과 같다.<br>• `challengeId/customerId/recordId/counselorId` 4개 FK를 모두 `onDelete: Cascade`로 선언한다.<br>• `@@unique([recordId])`로 한 상담 기록당 최대 1건의 등록을 보장한다.<br>• `status ∈ ChallengeEnrollmentStatus{IN_PROGRESS, COMPLETED, DROPPED}`(기본 `IN_PROGRESS`). |
 | FR13-6 | `counselorId`는 쿼리 편의를 위해 비정규화 저장하되, Analytics 전환율 산정은 **항상** 연결된 `ConsultationRecord`의 `counselorId`(record JOIN)를 기준으로 한다.                                                                                                                                                                                               |
 
 ### FR15 — 통화 시도 증거 레이어 (CallLog — ADR 0016)
 
+> 상담사가 노쇼 등에 대한 통화 시도를 기록·조회·정정해 '연락했다'는 증거를 남기되, 예약 상태는 건드리지 않는다.
+
 | ID     | 요구사항                                                                                                                                                                                                                                                                                                                   |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FR15-1 | `GET /counselor/bookings/:bookingId/brief` 응답에 `phone: string` 필드(고객 연락처)를 포함한다. `Customer.phone`은 기존 필드 — 브리핑 투영만 추가(스키마 변경 없음). 타 상담사 예약 조회 시 `403`(소유권 가드 재사용). PII 최소 노출: brief API는 이미 COUNSELOR 소유권 검증을 수행하므로 접근 범위가 최소화된다. |
-| FR15-2 | 상담사는 `POST /counselor/bookings/:bookingId/calls`로 통화 시도를 기록할 수 있다(`CallLog` 생성, 201). Body: `{ outcome: CONNECTED\|NO_ANSWER\|INVALID, note?: string }`. 비파괴적 — `Booking.status`를 변경하지 않는다(P5 루즈 커플링). 동일 예약에 복수 CallLog 허용(반복 통화 시도). 비담당 상담사 `403`, 없는 bookingId `404`. |
+| FR15-2 | 상담사는 `POST /counselor/bookings/:bookingId/calls`로 통화 시도를 기록할 수 있다(`CallLog` 생성, 201).<br>• Body: `{ outcome: CONNECTED\|NO_ANSWER\|INVALID, note?: string }`.<br>• 비파괴적 — `Booking.status`를 변경하지 않는다(P5 루즈 커플링).<br>• 동일 예약에 복수 CallLog 허용(반복 통화 시도).<br>• 비담당 상담사 `403`, 없는 bookingId `404`. |
 | FR15-2a | 상담사는 브리핑에서 해당 예약의 통화 이력을 **조회**할 수 있다. `GET /counselor/bookings/:bookingId/brief` 응답에 `callLogs: { id, outcome, note, createdAt }[]`(최신순)이 포함된다. brief는 `phone`과 동일한 소유권 경계 안에서만 노출되므로 `note`도 담당 상담사에게 표시된다(검토·정정용). |
-| FR15-2b | 상담사는 `PATCH /counselor/bookings/:bookingId/calls/:callId`로 잘못 클릭한 통화 outcome을 정정하거나 메모를 수정할 수 있다(200). Body는 생성과 동일(`{ outcome, note? }`). `outcome` + `note`만 변경하며 `Booking.status`는 변경하지 않는다(P5). 비담당 상담사 `403`, 다른 예약에 속하거나 없는 `callId`는 `404`. outcome 편집은 집계가 read-time이므로 Analytics에 즉시 반영(마이그레이션·백필 없음). 생성 폼을 그대로 재사용해 편집한다. |
-| FR15-3 | `GET /admin/analytics`는 `contactAttempts`(CallLog 총 건수), `callOutcomeDistribution`(outcome별 카운트 `{ CONNECTED, NO_ANSWER, INVALID }`), `noShowWithoutContactRate`(`number\|null` — NO_SHOW 예약 중 CallLog 미기록 비율; NO_SHOW=0개이면 `null`)를 추가로 반환한다. 기존 `scope=own\|all` + `counselorId` 필터를 준수한다. |
+| FR15-2b | 상담사는 `PATCH /counselor/bookings/:bookingId/calls/:callId`로 잘못 클릭한 통화 outcome을 정정하거나 메모를 수정할 수 있다(200).<br>• Body는 생성과 동일(`{ outcome, note? }`).<br>• `outcome` + `note`만 변경하며 `Booking.status`는 변경하지 않는다(P5).<br>• 비담당 상담사 `403`, 다른 예약에 속하거나 없는 `callId`는 `404`.<br>• outcome 편집은 집계가 read-time이므로 Analytics에 즉시 반영된다(마이그레이션·백필 없음).<br>• 생성 폼을 그대로 재사용해 편집한다. |
+| FR15-3 | `GET /admin/analytics`는 다음 통화 지표를 추가로 반환한다.<br>• `contactAttempts` — CallLog 총 건수<br>• `callOutcomeDistribution` — outcome별 카운트 `{ CONNECTED, NO_ANSWER, INVALID }`<br>• `noShowWithoutContactRate`(`number\|null`) — NO_SHOW 예약 중 CallLog 미기록 비율(NO_SHOW=0개이면 `null`)<br>• 기존 `scope=own\|all` + `counselorId` 필터를 준수한다. |
 
 ---
 
@@ -189,24 +223,30 @@
 
 ### NFR1 — 재현성 (Reproducibility)
 
+> 평가자가 외부 계정·키 없이 단일 명령으로 전체 골든 패스를 재현할 수 있어야 한다.
+
 | ID     | 요구사항                                                                                                                                                                                                                                                                                                            |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | NFR1-1 | 외부 계정, API 키, 유료 서비스 의존이 **0개**여야 한다. 평가자가 계정 없이 전체 골든 패스를 실행할 수 있어야 한다.                                                                                                                                                                                                  |
 | NFR1-2 | `docker compose up` 단일 명령으로 PostgreSQL을 포함한 모든 인프라가 기동된다.                                                                                                                                                                                                                                       |
-| NFR1-3 | `prisma migrate deploy && prisma db seed`로 스키마 적용과 결정적 초기 데이터(고객·상담사2명·관리자·가족 계정, AvailabilitySlot 그리드, BioCom 7종 TestResult(참조범위·상태 포함), BioCom 보충제 Product 라인, `Challenge` 카탈로그 4건 + 데모 `ChallengeEnrollment` 1건, 고객↔가족 ACCEPTED FamilyLink)가 적재된다. |
+| NFR1-3 | `prisma migrate deploy && prisma db seed`로 스키마 적용과 결정적 초기 데이터가 적재된다. 적재 항목:<br>• 고객·상담사2명·관리자·가족 계정<br>• AvailabilitySlot 그리드<br>• BioCom 7종 TestResult(참조범위·상태 포함)<br>• BioCom 보충제 Product 라인<br>• `Challenge` 카탈로그 4건 + 데모 `ChallengeEnrollment` 1건<br>• 고객↔가족 ACCEPTED FamilyLink |
 | NFR1-4 | SMS·이메일 등 외부 알림 채널은 시뮬레이션(콘솔 출력 + DB 레코드)으로 대체한다.                                                                                                                                                                                                                                      |
 | NFR1-5 | README에 사전 요건, 기동 절차, seed 계정 표, 골든 패스 클릭 시나리오가 명시된다.                                                                                                                                                                                                                                    |
 
 ### NFR2 — 동시성 정확성 (Concurrency Correctness)
 
+> 동일 슬롯 동시 예약은 insert-first + DB 제약으로 정확히 1건만 허용하고, 이를 통합 테스트로 증명한다.
+
 | ID     | 요구사항                                                                                                                                                                                                                                                                    |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | NFR2-1 | 동일 슬롯에 대한 동시 예약 요청이 복수 ACTIVE(PENDING 또는 CONFIRMED) 상태로 저장되지 않는다.                                                                                                                                                                               |
-| NFR2-2 | 구현 패턴은 **insert-first, catch-violation**: 트랜잭션 내에서 `Booking` INSERT를 즉시 시도하고, PostgreSQL unique violation(`SQLSTATE 23505`)을 `ConflictException(409)`로 매핑한다. check-then-insert 패턴의 TOCTOU 경쟁 조건을 배제한다.                                 |
-| NFR2-3 | `AvailabilitySlot.slotId`에 부분 unique 인덱스(`WHERE status IN ('PENDING','CONFIRMED')`)를 적용한다. PENDING 상태도 슬롯을 선점하므로, 두 고객이 동시에 PENDING 상태로 진입하는 것을 방지한다. CANCELLED/COMPLETED 예약은 인덱스 조건에서 제외되어 슬롯 재예약이 허용된다. |
-| NFR2-4 | 동시성 정확성은 주장이 아니라 **통합 테스트(`booking.concurrency.spec.ts`)**로 증명한다: 동일 슬롯에 20개 동시 요청 → 성공 1건, 409 19건, DB `Booking` count = 1 assert.                                                                                                    |
+| NFR2-2 | 구현 패턴은 **insert-first, catch-violation**이다.<br>• 트랜잭션 내에서 `Booking` INSERT를 즉시 시도한다.<br>• PostgreSQL unique violation(`SQLSTATE 23505`)을 `ConflictException(409)`로 매핑한다.<br>• check-then-insert 패턴의 TOCTOU 경쟁 조건을 배제한다. |
+| NFR2-3 | `AvailabilitySlot.slotId`에 부분 unique 인덱스(`WHERE status IN ('PENDING','CONFIRMED')`)를 적용한다.<br>• PENDING 상태도 슬롯을 선점하므로, 두 고객이 동시에 PENDING 상태로 진입하는 것을 방지한다.<br>• CANCELLED/COMPLETED 예약은 인덱스 조건에서 제외되어 슬롯 재예약이 허용된다. |
+| NFR2-4 | 동시성 정확성은 주장이 아니라 **통합 테스트(`booking.concurrency.spec.ts`)**로 증명한다: 동일 슬롯에 20개 동시 요청 → 성공 1건, 409 19건, DB `Booking` count = 1 assert. |
 
 ### NFR3 — 보안 및 권한 (Security & Authorization)
+
+> 인증은 JWT 기반이며, 역할 층과 소유권 층을 분리 구현하는 것이 설계 판단의 핵심이다.
 
 | ID     | 요구사항                                                                                                                                                                                                                                                                              |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -214,9 +254,11 @@
 | NFR3-2 | 역할 층(RolesGuard)과 소유권 층(서비스 레이어 가드)은 분리 구현된다. 이 분리가 설계 판단의 핵심 신호다.                                                                                                                                                                               |
 | NFR3-3 | 비밀번호는 bcrypt로 해싱한다. JWT secret은 환경 변수로 주입된다.                                                                                                                                                                                                                      |
 | NFR3-4 | 역할·소유권 거부 케이스는 각각 별도 통합 테스트(`rbac.spec.ts`)로 검증된다.                                                                                                                                                                                                           |
-| NFR3-5 | Next.js Middleware가 역할별 라우트 보호를 수행한다: CUSTOMER(`/book`, `/bookings`, `/results`), COUNSELOR(`/schedule`, `/performance`), ADMIN(`/dashboard`). API 프록시(`/api/proxy/**`)가 JWT를 httpOnly 쿠키에서 추출해 NestJS로 전달하므로 클라이언트 JS는 토큰을 노출하지 않는다. |
+| NFR3-5 | Next.js Middleware가 역할별 라우트 보호를 수행한다.<br>• CUSTOMER: `/book`, `/bookings`, `/results`<br>• COUNSELOR: `/schedule`, `/performance`<br>• ADMIN: `/dashboard`<br>• API 프록시(`/api/proxy/**`)가 JWT를 httpOnly 쿠키에서 추출해 NestJS로 전달하므로 클라이언트 JS는 토큰을 노출하지 않는다. |
 
 ### NFR4 — 2주 솔로 일정 제약 (Solo 2-Week Budget)
+
+> 2주 솔로 예산에 맞춰 컴포넌트를 차등 구현하고, 설계 문서를 1차 산출물로 삼는다.
 
 | ID     | 요구사항                                                                                                                                                             |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -229,7 +271,8 @@
 
 ## 3. 수용 기준 (Acceptance Criteria)
 
-> 아래 표의 각 항목은 검증 방법을 명시한 형태로 기술된다.
+> 각 AC는 **검증 가능 기준**(무엇이 참이어야 하는가)과 **검증 방법**(어떤 테스트로 확인하는가)을 한 행에 담는다.
+> 시리즈 묶음: AC1–AC11(코어 골든패스) · AC-N(노쇼) · AC-UX(콘솔) · AC-A(운영 지표) · AC-S(슬롯 CRUD) · AC-C(챌린지) · AC-P(브리핑·생산성) · AC-M(검사 지표) · AC-L(통화 증거).
 > "통합 테스트"는 NestJS + supertest 기반 백엔드 통합 테스트를 의미한다.
 
 | AC                                      | 검증 가능 기준                                                                                                                                                                                                                                                                                                                                                  | 검증 방법                                                                                                                                                                                                                            |

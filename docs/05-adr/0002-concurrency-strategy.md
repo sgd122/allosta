@@ -4,19 +4,18 @@
 - **날짜**: 2026-06-09
 - **결정자**: 설계자 (솔로 과제)
 
+**결정 (한 줄):** `Booking.slotId`에 부분 unique 인덱스를 걸고 insert-first/catch-violation 패턴으로 동시 예약을 DB 레벨에서 차단한다.
+
 ---
 
 ## Context (결정 배경)
 
-동일 슬롯에 두 명 이상의 고객이 동시에 예약을 시도할 때, 단 한 건만 확정(CONFIRMED)되어야 한다.
-이를 잘못 설계하면 중복 예약이 DB에 저장되며, 이는 데이터 무결성 파괴이자 서비스 신뢰성 붕괴다.
+동일 슬롯에 두 명 이상의 고객이 동시에 예약을 시도할 때, 단 한 건만 확정(CONFIRMED)되어야 한다. 이를 잘못 설계하면 중복 예약이 DB에 저장되며, 이는 데이터 무결성 파괴이자 서비스 신뢰성 붕괴다.
 
 추가로 다음 두 가지 설계 함정을 회피해야 한다.
 
-1. **TOCTOU(Time-of-Check-Time-of-Use) 경쟁**: "가용 슬롯 조회 → 확인 후 삽입"(check-then-insert) 패턴은
-   조회와 삽입 사이에 다른 트랜잭션이 끼어들 수 있다. 두 트랜잭션이 동시에 "가용"을 확인하고 모두 삽입에 성공하는 것이 가능하다.
-2. **이중 진실원(dual source of truth)**: `AvailabilitySlot.isOpen` 불리언과 부분 unique 인덱스가
-   "슬롯이 예약됨"을 이중으로 표현하면, 두 상태가 어긋날 경우 버그의 근원이 된다.
+1. **TOCTOU(Time-of-Check-Time-of-Use) 경쟁**: "가용 슬롯 조회 → 확인 후 삽입"(check-then-insert) 패턴은 조회와 삽입 사이에 다른 트랜잭션이 끼어들 수 있다. 두 트랜잭션이 동시에 "가용"을 확인하고 모두 삽입에 성공하는 것이 가능하다.
+2. **이중 진실원(dual source of truth)**: `AvailabilitySlot.isOpen` 불리언과 부분 unique 인덱스가 "슬롯이 예약됨"을 이중으로 표현하면, 두 상태가 어긋날 경우 버그의 근원이 된다.
 
 ---
 
@@ -24,7 +23,7 @@
 
 **`Booking.slotId`에 부분 unique 인덱스(`WHERE status IN ('PENDING','CONFIRMED')`)를 걸고, insert-first/catch-violation 패턴을 사용한다.**
 
-> **변경 이력 (booking_pending_first 마이그레이션)**: 초기 설계는 `WHERE status = 'CONFIRMED'`만 인덱스 조건으로 사용했다. 예약 생명주기가 PENDING-first 모델로 변경되면서, PENDING 상태에서도 슬롯을 선점해야 한다는 요구가 생겼다. 인덱스 조건을 `WHERE status IN ('PENDING','CONFIRMED')`으로 확장해, 두 고객이 동시에 PENDING 예약을 생성하는 경쟁도 DB 레벨에서 차단한다.
+> **변경 이력 (booking_pending_first 마이그레이션)**: 초기 설계는 `WHERE status = 'CONFIRMED'`만 인덱스 조건으로 사용했다. 예약 생명주기가 PENDING-first 모델로 변경되면서 PENDING 상태에서도 슬롯을 선점해야 한다는 요구가 생겼다. 인덱스 조건을 `WHERE status IN ('PENDING','CONFIRMED')`으로 확장해, 두 고객이 동시에 PENDING 예약을 생성하는 경쟁도 DB 레벨에서 차단한다.
 
 ### 예약 생명주기: PENDING-first
 
@@ -85,7 +84,7 @@ race condition을 다루지 않아도 된다.
 **트레이드오프 / 부정적 영향**
 
 - `23505` 에러 코드를 `ConflictException(409)`으로 매핑하는 코드가 서비스 레이어에 필요하다. Prisma의 `PrismaClientKnownRequestError.code === 'P2002'`를 잡아 409로 변환하는 방식으로 구현한다.
-- 슬롯을 시간 단위로 분할하거나 복수 상담사를 하나의 슬롯에 배정하는 구조로 확장될 경우, unique constraint 조건이 복잡해져 비관적 락 재검토가 필요하다.
+- 슬롯을 시간 단위로 분할하거나 복수 상담사를 하나의 슬롯에 배정하는 구조로 확장될 경우, unique constraint 조건이 복잡해진다. 그 시점에 비관적 락 재검토가 필요하다.
 
 ---
 

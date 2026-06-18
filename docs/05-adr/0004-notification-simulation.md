@@ -4,6 +4,8 @@
 - **날짜**: 2026-06-09
 - **결정자**: 설계자 (솔로 과제)
 
+**결정 (한 줄):** 외부 계정 없이 재현 가능하도록 `NotificationChannel` 인터페이스를 정의하고 `ConsoleChannel`로 실동작하되, `EmailChannel`·`SmsChannel`은 어댑터 stub으로 제공한다.
+
 ---
 
 ## Context (결정 배경)
@@ -17,12 +19,9 @@
 
 알림 채널 후보는 콘솔 로그, 인앱(DB 레코드), 이메일, SMS/카카오 등이다.
 
-핵심 제약: **재현성(외부 계정 0개).** 실제 SMS/카카오 발송은 외부 계정·API 키·수신 전화번호를 요구하며,
-평가자가 동일한 환경에서 그대로 실행하는 것이 불가능해진다. 이 제약이 알림 설계의 모든 선택을 지배한다.
+핵심 제약: **재현성(외부 계정 0개).** 실제 SMS/카카오 발송은 외부 계정·API 키·수신 전화번호를 요구하며, 평가자가 동일한 환경에서 그대로 실행하는 것이 불가능해진다. 이 제약이 알림 설계의 모든 선택을 지배한다.
 
-동시에, 알림 컴포넌트가 단순히 "미구현"처럼 보여서는 안 된다.
-스케줄러가 실제로 발화하고, 상태 전이(PENDING→SENT)가 DB에 기록되며,
-확장 채널 교체가 설계 수준에서 가능함을 코드로 드러내야 한다.
+동시에, 알림 컴포넌트가 단순히 "미구현"처럼 보여서는 안 된다. 스케줄러가 실제로 발화하고, 상태 전이(PENDING→SENT)가 DB에 기록되며, 확장 채널 교체가 설계 수준에서 가능함을 코드로 드러내야 한다.
 
 ---
 
@@ -58,11 +57,10 @@ export interface NotificationChannel {
 
 ### 스케줄러 결정성(demo determinism) 확보
 
-"예약 시각 전 리마인더"는 seed 슬롯이 먼 미래라면 평가 창 안에서 발화하지 않을 수 있다.
-이를 세 가지로 해결한다.
+"예약 시각 전 리마인더"는 seed 슬롯이 먼 미래라면 평가 창 안에서 발화하지 않을 수 있다. 이를 세 가지로 해결한다.
 
 1. `REMINDER_LEAD_MINUTES` 환경 변수로 리드타임 조정 가능(기본값 30분, 데모 시 1–2분으로 설정).
-2. `seed.ts`에 현재 시각 기준 가까운 미래(+10분) 슬롯 1건 포함 → 스케줄러가 데모 중 실제 발화.
+2. `seed.ts`에 현재 시각 기준 가까운 미래(+10분) 슬롯 1건 포함 — 스케줄러가 데모 중 실제 발화.
 3. `backend/scripts/trigger-scheduler.ts`(앱 컨텍스트 부팅 → `NotificationService.dispatchPending()` 호출 후 종료) 또는 ADMIN 전용 엔드포인트 `POST /admin/notifications/dispatch`로 수동 즉시 트리거 제공.
 
 ---
@@ -83,9 +81,9 @@ export interface NotificationChannel {
 **긍정적 영향**
 
 - 외부 계정 없이 `docker compose up` + seed 만으로 알림 흐름 전체 동작 및 검증 가능.
-- `NotificationChannel` 인터페이스가 실 채널 추가의 명확한 확장 경로를 제공한다. 실 SMS 어댑터 구현 시 `SmsChannel.send()` 구현만 추가하면 되고, `NotificationService`·`NotificationScheduler`는 변경 불필요.
+- `NotificationChannel` 인터페이스가 실 채널 추가의 명확한 확장 경로를 제공한다. 실 SMS 어댑터 구현 시 `SmsChannel.send()` 구현만 추가하면 되고, `NotificationService`·`NotificationScheduler`는 변경이 불필요하다.
 - Notification DB 레코드 + `status(PENDING→SENT)` 전이가 기록되어 알림 이력 추적이 가능하다.
-- 스케줄러 발화(`notification.scheduler.ts`)가 실제 cron 잡으로 동작하므로 "스케줄러가 존재한다"는 증명이 콘솔 출력으로 가시화된다.
+- 스케줄러(`notification.scheduler.ts`)가 실제 cron 잡으로 동작하므로 "스케줄러가 존재한다"는 증명이 콘솔 출력으로 가시화된다.
 
 **트레이드오프 / 부정적 영향**
 
